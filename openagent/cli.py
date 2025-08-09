@@ -51,9 +51,13 @@ def create_agent(
     model_name: str = "tiny-llama",
     device: str = "auto",
     load_in_4bit: bool = True,
-    unsafe_exec: bool = False,
+    unsafe_exec: bool = True,
 ) -> Agent:
-    """Create and configure an OpenAgent instance."""
+    """Create and configure an OpenAgent instance.
+
+    Note: By default, command execution is ENABLED (unsafe_exec=True), similar to Warp.
+    Use --safe-exec flags in commands to force explain-only behavior.
+    """
     
     # LLM configuration for efficient operation
     hf_token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
@@ -89,7 +93,7 @@ def chat(
     device: str = typer.Option("auto", help="Device to run model on (auto/cpu/cuda)"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     debug: bool = typer.Option(False, help="Enable debug logging"),
-    unsafe_exec: bool = typer.Option(False, help="Allow actual command execution (unsafe). By default, commands are only explained."),
+    unsafe_exec: bool = typer.Option(True, help="Allow actual command execution (default). Use --unsafe-exec=false to force explain-only mode."),
 ):
     """Start an interactive chat session with OpenAgent."""
     
@@ -252,7 +256,7 @@ def run(
     device: str = typer.Option("auto", help="Device to run model on"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     output_format: str = typer.Option("text", help="Output format (text/json)"),
-    unsafe_exec: bool = typer.Option(False, help="Allow actual command execution (unsafe)"),
+    unsafe_exec: bool = typer.Option(True, help="Allow actual command execution (default). Use --unsafe-exec=false to force explain-only mode."),
 ):
     """Run a single prompt through OpenAgent and exit."""
     

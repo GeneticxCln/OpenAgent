@@ -23,12 +23,12 @@ import uvicorn
 from openagent.core.agent import Agent
 from openagent.core.exceptions import AgentError, ToolError
 from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
-from openagent.server.auth import AuthManager, User
-from openagent.server.rate_limit import RateLimiter
+from openagent.server.auth import AuthManager
+from openagent.server.rate_limiter import RateLimiter
 from openagent.server.models import (
     ChatRequest, ChatResponse, AgentStatus, ModelInfo,
     CodeRequest, CodeResponse, AnalysisRequest, AnalysisResponse,
-    SystemInfoResponse, ErrorResponse
+    SystemInfoResponse, ErrorResponse, User, LoginRequest, LoginResponse
 )
 
 # Configure logging
@@ -96,17 +96,71 @@ app.add_middleware(
     allowed_hosts=["localhost", "127.0.0.1", "*.localhost"]
 )
 
+# WebSocket support
+from fastapi import WebSocket, WebSocketDisconnect
+from openagent.websocket import WebSocketManager, WebSocketHandler, WebSocketMessage, MessageType
+
+ws_manager = WebSocketManager()
+
+# Helper to lookup agents for handler
+
+def _lookup_agent(name: str):
+    return agents.get(name)
+
+# Optional auth: use existing auth_manager if tokens are enabled
+async def _verify_token(token: str):
+    try:
+        payload = auth_manager.verify_token(token)
+        return payload
+    except Exception:
+        return None
+
+ws_handler = WebSocketHandler(
+    send=lambda cid, msg: ws_manager.send_message(cid, msg),
+    lookup_agent=_lookup_agent,
+    authenticate_token=_verify_token,
+)
+
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    """Handle WebSocket connections for real-time communication."""
+    info = ConnectionInfo()
+    info.client_ip = ws.client.host if ws.client else None
+    info.user_agent = ws.headers.get("user-agent")
+
+    connection_id = await ws_manager.accept(ws, info)
+
+    try:
+        while True:
+            raw_text = await ws.receive_text()
+            await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        # Send error then close
+        try:
+            await ws_manager.send_message(connection_id, WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}))
+        except Exception:
+            pass
+    finally:
+        await ws_manager.disconnect(connection_id)
+
 
 # Authentication dependency
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> Optional[User]:
     """Get current authenticated user."""
-    if not credentials:
+    if not credentials or not credentials.credentials:
         return None
-    
     try:
-        user = await auth_manager.verify_token(credentials.credentials)
+        payload = auth_manager.verify_token(credentials.credentials)
+        if not payload:
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        user = auth_manager.get_user_by_id(user_id)
         return user
     except Exception as e:
         logger.warning(f"Authentication failed: {e}")
@@ -116,14 +170,8 @@ async def get_current_user(
 # Rate limiting dependency
 async def check_rate_limit(request: Request, user: Optional[User] = Depends(get_current_user)):
     """Check rate limits for the request."""
-    client_ip = request.client.host
     user_id = user.id if user else None
-    
-    if not await rate_limiter.check_limit(client_ip, user_id):
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded. Please try again later."
-        )
+    await rate_limiter.check_request(request, user_id)
 
 
 # Error handlers
@@ -166,22 +214,19 @@ async def health_check():
 
 
 # Authentication endpoints
-@app.post("/auth/login")
-async def login(username: str, password: str):
+@app.post("/auth/login", response_model=LoginResponse)
+async def login(request: LoginRequest) -> LoginResponse:
     """Authenticate user and return access token."""
-    user = await auth_manager.authenticate(username, password)
+    user = auth_manager.authenticate_user(request.username, request.password)
     if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials"
-        )
-    
-    token = await auth_manager.create_token(user)
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": user.dict()
-    }
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = auth_manager.create_access_token({"sub": user.id})
+    return LoginResponse(
+        access_token=token,
+        token_type="bearer",
+        user=user,
+        expires_in=auth_manager.config.access_token_expire_minutes * 60
+    )
 
 
 # Chat endpoints
