@@ -208,29 +208,59 @@ class HuggingFaceLLM:
                 "device_map": "auto" if self.device == "cuda" else None,
             }
             
-            # Quantization options
-            if self.load_in_8bit:
-                model_kwargs["load_in_8bit"] = True
-            elif self.load_in_4bit:
-                model_kwargs["load_in_4bit"] = True
-            
-            # Try to load as causal LM first, then seq2seq
+            # Quantization options (only if bitsandbytes is available)
             try:
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.model_path,
-                    **model_kwargs
-                )
-                self.model_type = "causal"
+                import bitsandbytes as bnb
+                if self.load_in_8bit:
+                    model_kwargs["load_in_8bit"] = True
+                elif self.load_in_4bit:
+                    model_kwargs["load_in_4bit"] = True
+            except ImportError:
+                if self.load_in_8bit or self.load_in_4bit:
+                    logger.warning("bitsandbytes not available, disabling quantization")
+                    self.load_in_8bit = False
+                    self.load_in_4bit = False
+            
+            # Auto-detect model type and load appropriate model
+            try:
+                # First try to load with AutoModel to detect type automatically
+                from transformers import AutoModel, AutoConfig
+                config = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+                
+                # Determine model type based on architecture
+                arch_name = getattr(config, "architectures", [None])[0] if hasattr(config, "architectures") else None
+                model_type = getattr(config, "model_type", "unknown")
+                
+                # Load appropriate model based on type
+                if any(x in str(arch_name).lower() for x in ["llama", "mistral", "gpt", "codegen", "starcoder", "causal"]) or "causal" in model_type.lower():
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_path,
+                        **model_kwargs
+                    )
+                    self.model_type = "causal"
+                    logger.info(f"Loaded as causal LM (architecture: {arch_name})")
+                elif any(x in str(arch_name).lower() for x in ["t5", "bart", "pegasus", "seq2seq"]) or "seq2seq" in model_type.lower():
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self.model_path,
+                        **model_kwargs
+                    )
+                    self.model_type = "seq2seq"
+                    logger.info(f"Loaded as seq2seq model (architecture: {arch_name})")
+                else:
+                    # Try causal LM as default fallback
+                    logger.info(f"Unknown architecture {arch_name}, trying causal LM")
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_path,
+                        **model_kwargs
+                    )
+                    self.model_type = "causal"
+                    
             except Exception as e:
                 # If the failure looks like CUDA OOM, bubble up so outer handler can fallback to CPU
                 if (getattr(type(e), "__name__", "") == "OutOfMemoryError" or "cuda oom" in str(e).lower()) and self.device != "cpu":
                     raise e
-                logger.info("Trying to load as seq2seq model")
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                    self.model_path,
-                    **model_kwargs
-                )
-                self.model_type = "seq2seq"
+                logger.error(f"Failed to load model with auto-detection: {e}")
+                raise
             
             # Move to device if not using device_map
             if not model_kwargs.get("device_map") and self.device != "cpu":

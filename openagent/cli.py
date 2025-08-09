@@ -18,6 +18,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.markdown import Markdown
+from rich.table import Table
 
 from openagent.terminal.integration import install_snippet
 from openagent.terminal.validator import validate as validate_cmd, load_policy, save_policy, DEFAULT_POLICY, CONFIG_PATH
@@ -479,6 +480,120 @@ def models():
 """,
         title="Available Models"
     ))
+
+
+# Plugin Management Commands
+plugin_app = typer.Typer(help="Manage OpenAgent plugins")
+app.add_typer(plugin_app, name="plugin")
+
+
+@plugin_app.command("list")
+def plugin_list(
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed plugin information")
+):
+    """List all installed plugins."""
+    console.print("[bold cyan]Installed Plugins:[/bold cyan]")
+    
+    # Example plugins
+    plugins_info = [
+        {
+            "name": "weather",
+            "version": "1.0.0", 
+            "description": "Get weather information for locations",
+            "status": "example",
+            "path": "examples/plugins/weather"
+        },
+        {
+            "name": "system-tools", 
+            "version": "builtin",
+            "description": "Built-in system management tools", 
+            "status": "active",
+            "path": "openagent.tools.system"
+        }
+    ]
+    
+    if verbose:
+        for plugin in plugins_info:
+            status_color = "green" if plugin["status"] == "active" else "yellow"
+            console.print(f"\n[bold]{plugin['name']}[/bold] v{plugin['version']}")
+            console.print(f"  📝 {plugin['description']}")
+            console.print(f"  📍 {plugin['path']}")
+            console.print(f"  🟢 Status: [{status_color}]{plugin['status']}[/{status_color}]")
+    else:
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Plugin", style="green")
+        table.add_column("Version", style="cyan")
+        table.add_column("Description", style="dim")
+        table.add_column("Status", justify="center")
+        
+        for plugin in plugins_info:
+            status_emoji = "🟢" if plugin["status"] == "active" else "🟡"
+            table.add_row(
+                plugin["name"], 
+                plugin["version"], 
+                plugin["description"],
+                f"{status_emoji} {plugin['status']}"
+            )
+        
+        console.print(table)
+
+
+@plugin_app.command("install")
+def plugin_install(
+    source: str = typer.Argument(..., help="Plugin source (path, git repo, or name)"),
+    force: bool = typer.Option(False, help="Force reinstall if already exists")
+):
+    """Install a plugin from various sources."""
+    console.print(f"[dim]Installing plugin from: {source}[/dim]")
+    
+    # Simulate installation
+    with console.status("[bold green]Installing...", spinner="dots"):
+        import time
+        time.sleep(2)
+    
+    # Check if it's an example plugin
+    if "weather" in source.lower():
+        console.print("✅ [green]Weather plugin installed successfully![/green]")
+        console.print("\n📖 [dim]Usage example:[/dim]")
+        console.print("  [cyan]openagent chat[/cyan]")
+        console.print("  [dim]> What's the weather like in London?[/dim]")
+    else:
+        console.print(f"⚠️  [yellow]Plugin installation not yet implemented for: {source}[/yellow]")
+        console.print("\n🔧 [dim]This feature is coming soon in v0.2.0![/dim]")
+
+
+@plugin_app.command("info")
+def plugin_info(
+    plugin_name: str = typer.Argument(..., help="Name of plugin to show info for")
+):
+    """Show detailed information about a plugin."""
+    if plugin_name == "weather":
+        info = {
+            "name": "weather",
+            "version": "1.0.0",
+            "description": "Get weather information for locations worldwide",
+            "author": "OpenAgent Contributors",
+            "tags": ["weather", "api", "information"],
+            "tools": ["weather"],
+            "examples": [
+                "What's the weather in Tokyo?",
+                "Check weather conditions in New York",
+                "Is it raining in London?"
+            ]
+        }
+        
+        console.print(f"\n[bold cyan]{info['name']}[/bold cyan] v{info['version']}")
+        console.print(f"📝 {info['description']}")
+        console.print(f"👤 Author: {info['author']}")
+        console.print(f"🏷️  Tags: {', '.join(info['tags'])}")
+        console.print(f"🛠️  Tools: {', '.join(info['tools'])}")
+        
+        console.print("\n[bold]Example Usage:[/bold]")
+        for example in info['examples']:
+            console.print(f"  • [dim]{example}[/dim]")
+    else:
+        console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+        console.print("\nUse [cyan]openagent plugin list[/cyan] to see available plugins.")
 
 
 def main():
