@@ -219,10 +219,12 @@ class TestSystemInfo:
     async def test_process_info_error_handling(self, mock_process_iter):
         """Test process information with access errors."""
         # Mock process that raises AccessDenied
-        mock_proc = Mock()
-        mock_proc.info = {"pid": 1234, "name": "test", "cpu_percent": 5.0, "memory_percent": 2.0}
-        mock_proc.configure_mock(**{"info.side_effect": [mock_proc.info, 
-                                                        pytest.importorskip('psutil').AccessDenied()]})
+        from unittest.mock import MagicMock, PropertyMock
+        psutil_mod = pytest.importorskip('psutil')
+
+        mock_proc = MagicMock()
+        first_info = {"pid": 1234, "name": "test", "cpu_percent": 5.0, "memory_percent": 2.0}
+        type(mock_proc).info = PropertyMock(side_effect=[first_info, psutil_mod.AccessDenied()])
         
         mock_process_iter.return_value = [mock_proc, mock_proc]
         

@@ -212,7 +212,8 @@ Be conversational but professional. If you're unsure about something, say so.
             
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
-            return f"I apologize, but I encountered an issue generating a response. Error: {str(e)}"
+            # Propagate to outer handler so error metadata is set
+            raise AgentError(f"LLM generation failed: {e}")
     
     async def _should_use_tools(self, input_text: str) -> bool:
         """
@@ -273,16 +274,10 @@ Be conversational but professional. If you're unsure about something, say so.
         
         return results
     
-    async def _tool_is_relevant(self, tool: BaseTool, input_text: str) -> bool:
+    def _tool_is_relevant_sync(self, tool: BaseTool, input_text: str) -> bool:
         """
-        Check if a tool is relevant for the given input.
-        
-        Args:
-            tool: Tool to check
-            input_text: Input text to analyze
-            
-        Returns:
-            True if tool is relevant
+        Synchronous logic to check if a tool is relevant for the given input.
+        Used for both runtime and tests (via __wrapped__).
         """
         # Simple keyword-based relevance (replace with LLM analysis)
         input_lower = input_text.lower()
@@ -300,6 +295,19 @@ Be conversational but professional. If you're unsure about something, say so.
         
         # Default: always consider relevant if no specific matching logic
         return True
+
+    async def _tool_is_relevant(self, tool: BaseTool, input_text: str) -> bool:
+        """
+        Check if a tool is relevant for the given input.
+        
+        Args:
+            tool: Tool to check
+            input_text: Input text to analyze
+            
+        Returns:
+            True if tool is relevant
+        """
+        return self._tool_is_relevant_sync(tool, input_text)
     
     async def _generate_main_response(self, input_text: str, tool_results: List[str]) -> str:
         """
@@ -358,3 +366,6 @@ Be conversational but professional. If you're unsure about something, say so.
         self.current_task = None
         self.iteration_count = 0
         logger.info(f"Agent '{self.name}' has been reset")
+
+# Expose __wrapped__ for testing convenience
+Agent._tool_is_relevant.__wrapped__ = Agent._tool_is_relevant_sync

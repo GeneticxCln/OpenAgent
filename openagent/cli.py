@@ -261,13 +261,15 @@ def run(
     """Run a single prompt through OpenAgent and exit."""
     
     load_dotenv()
-    console.print("[dim]Initializing...[/dim]")
+    # Only print human-friendly initializing message for text output
+    if output_format != "json":
+        console.print("[dim]Initializing...[/dim]")
     
     # Create agent
     agent = create_agent(model, device, load_in_4bit, unsafe_exec)
     
     async def run_single():
-        with console.status("[bold green]Processing...", spinner="dots"):
+        with console.status("[bold green]Processing...", spinner="dots") if output_format != "json" else contextlib.nullcontext():
             response = await agent.process_message(prompt)
         
         if output_format == "json":
@@ -277,6 +279,7 @@ def run(
                 "response": response.content,
                 "metadata": response.metadata
             }
+            # Print only JSON to stdout (no extra formatting)
             console.print(json.dumps(result, indent=2))
         else:
             if "```" in response.content:
@@ -284,6 +287,7 @@ def run(
             else:
                 console.print(response.content)
     
+    import contextlib
     asyncio.run(run_single())
 
 
@@ -398,12 +402,14 @@ def policy(
         console.print("[green]Policy reset to defaults[/green]")
         return
     if action == "set-default":
-        if value not in {"allow", "warn", "block"}:
+        # Accept the decision as either the second or third positional argument
+        decision = value or key
+        if decision not in {"allow", "warn", "block"}:
             console.print("[red]Default must be one of allow|warn|block[/red]")
             raise typer.Exit(1)
-        p["default_decision"] = value
+        p["default_decision"] = decision
         save_policy(p)
-        console.print(f"[green]Default decision set to {value}[/green]")
+        console.print(f"[green]Default decision set to {decision}[/green]")
         return
     if action == "add-allow":
         if not key or not value:

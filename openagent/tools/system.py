@@ -87,11 +87,18 @@ class CommandExecutor(BaseTool):
             
             # Execute the command
             result = await self._execute_command(command)
+
+            # Normalize error message keywords for tests/consumers
+            result_error = result.get("error")
+            if isinstance(result_error, str):
+                low = result_error.lower()
+                if "timed out" in low and "timeout" not in low:
+                    result_error = result_error + " (timeout)"
             
             return ToolResult(
                 success=result["success"],
                 content=result["output"],
-                error=result.get("error"),
+                error=result_error,
                 metadata={
                     "command": command,
                     "exit_code": result.get("exit_code"),
@@ -159,7 +166,7 @@ class CommandExecutor(BaseTool):
                 return {
                     "success": False,
                     "output": "",
-                    "error": "Command timed out after 30 seconds",
+                    "error": "Command timeout after 30 seconds",
                     "exit_code": -1,
                     "execution_time": time.time() - start_time
                 }
