@@ -9,7 +9,7 @@ import os
 import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from openagent.core.exceptions import ConfigError
 
 
@@ -34,7 +34,8 @@ class LoggingConfig(BaseModel):
     max_file_size: str = Field("10MB", description="Maximum log file size")
     backup_count: int = Field(5, description="Number of backup log files")
     
-    @validator("level")
+    @field_validator("level")
+    @classmethod
     def validate_level(cls, v: str) -> str:
         """Validate logging level."""
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -62,7 +63,8 @@ class ServerConfig(BaseModel):
     reload: bool = Field(False, description="Enable auto-reload")
     access_log: bool = Field(True, description="Enable access logging")
     
-    @validator("port")
+    @field_validator("port")
+    @classmethod
     def validate_port(cls, v: int) -> int:
         """Validate port number."""
         if not 1 <= v <= 65535:
@@ -88,7 +90,8 @@ class Config(BaseModel):
     # Custom settings
     custom: Dict[str, Any] = Field(default_factory=dict, description="Custom configuration values")
     
-    @validator("environment")
+    @field_validator("environment")
+    @classmethod
     def validate_environment(cls, v: str) -> str:
         """Validate environment setting."""
         valid_envs = ["development", "staging", "production"]
