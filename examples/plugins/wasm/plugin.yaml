@@ -1,0 +1,153 @@
+name: wasm
+version: 1.0.0
+description: Execute WebAssembly modules and convert between WAT/WASM formats
+author: OpenAgent Contributors
+plugin_type: tool
+
+# Dependencies and compatibility
+dependencies: []
+openagent_version: ">=1.0.0"
+python_version: ">=3.9"
+
+# System requirements
+requirements:
+  - wasmtime
+  - wat2wasm
+  - wasm2wat
+
+# Plugin configuration schema
+config_schema:
+  type: object
+  properties:
+    wasmtime_executable:
+      type: string
+      default: "wasmtime"
+      description: "Path to Wasmtime runtime executable"
+    wat2wasm_executable:
+      type: string
+      default: "wat2wasm"
+      description: "Path to WAT to WASM compiler"
+    wasm2wat_executable:
+      type: string
+      default: "wasm2wat"
+      description: "Path to WASM to WAT decompiler"
+    timeout:
+      type: integer
+      minimum: 1
+      maximum: 300
+      default: 30
+      description: "Execution timeout in seconds"
+    max_output_size:
+      type: integer
+      minimum: 1000
+      maximum: 100000
+      default: 10000
+      description: "Maximum output size in characters"
+    max_memory:
+      type: string
+      default: "10MB"
+      description: "Maximum memory allocation for WASM modules"
+    enable_wasi:
+      type: boolean
+      default: true
+      description: "Enable WASI (WebAssembly System Interface)"
+    allowed_imports:
+      type: array
+      items:
+        type: string
+      default: ["wasi_snapshot_preview1"]
+      description: "List of allowed import modules"
+
+# Security permissions
+permissions:
+  - execute_wasm
+  - temporary_files
+  - process_execution
+  - memory_allocation
+
+# Plugin metadata
+keywords:
+  - webassembly
+  - wasm
+  - wat
+  - runtime
+  - compilation
+  - portable
+  - sandboxed
+
+license: MIT
+homepage: https://github.com/GeneticxCln/OpenAgent
+repository: https://github.com/GeneticxCln/OpenAgent
+
+# Installation and usage notes
+installation_notes: |
+  This plugin requires WebAssembly tools to be installed on your system.
+  
+  Install WebAssembly tools:
+  1. Install Wasmtime (WASM runtime):
+     - curl https://wasmtime.dev/install.sh -sSf | bash
+     - Or download from: https://github.com/bytecodealliance/wasmtime/releases
+  
+  2. Install WABT (WebAssembly Binary Toolkit):
+     - Ubuntu/Debian: sudo apt-get install wabt
+     - macOS: brew install wabt
+     - Windows: Download from https://github.com/WebAssembly/wabt/releases
+     - Or compile from source: https://github.com/WebAssembly/wabt
+  
+  The plugin provides wat2wasm and wasm2wat from WABT for compilation/decompilation.
+
+usage_examples:
+  - title: "Hello World in WAT"
+    description: "Simple WASM module using WASI"
+    code: |
+      (module
+        (import "wasi_snapshot_preview1" "fd_write" (func $fd_write (param i32 i32 i32 i32) (result i32)))
+        (memory (export "memory") 1)
+        (data (i32.const 0) "Hello from WASM!\n")
+        
+        (func $main (export "_start")
+          ;; Write to stdout
+          (i32.store (i32.const 24) (i32.const 0))   ;; iov.iov_base
+          (i32.store (i32.const 28) (i32.const 17))  ;; iov.iov_len
+          
+          (call $fd_write
+            (i32.const 1)   ;; stdout
+            (i32.const 24)  ;; iovec array
+            (i32.const 1)   ;; iovec count
+            (i32.const 32)  ;; bytes written
+          )
+          drop
+        )
+      )
+  
+  - title: "Math Functions"
+    description: "WASM module with exported functions"
+    code: |
+      (module
+        (func $add (export "add") (param $a i32) (param $b i32) (result i32)
+          local.get $a
+          local.get $b
+          i32.add
+        )
+        
+        (func $factorial (export "factorial") (param $n i32) (result i32)
+          (if (result i32)
+            (i32.le_s (local.get $n) (i32.const 1))
+            (then (i32.const 1))
+            (else
+              (i32.mul
+                (local.get $n)
+                (call $factorial (i32.sub (local.get $n) (i32.const 1)))
+              )
+            )
+          )
+        )
+      )
+  
+  - title: "Compile WAT to WASM"
+    description: "Using the plugin to compile WebAssembly Text to binary"
+    code: |
+      {
+        "action": "compile",
+        "data": "(module (func (export \"test\") (result i32) i32.const 42))"
+      }

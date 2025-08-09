@@ -1,0 +1,93 @@
+name: lua
+version: 1.0.0
+description: Execute Lua scripts and code snippets with safety restrictions
+author: OpenAgent Contributors
+plugin_type: tool
+
+# Dependencies and compatibility
+dependencies: []
+openagent_version: ">=1.0.0"
+python_version: ">=3.9"
+
+# System requirements
+requirements:
+  - lua
+
+# Plugin configuration schema
+config_schema:
+  type: object
+  properties:
+    lua_executable:
+      type: string
+      default: "lua"
+      description: "Path to Lua interpreter executable"
+    timeout:
+      type: integer
+      minimum: 1
+      maximum: 300
+      default: 30
+      description: "Execution timeout in seconds"
+    max_output_size:
+      type: integer
+      minimum: 1000
+      maximum: 100000
+      default: 10000
+      description: "Maximum output size in characters"
+    allow_file_io:
+      type: boolean
+      default: false
+      description: "Allow file I/O operations (security risk)"
+    enable_debug:
+      type: boolean
+      default: true
+      description: "Enable debug output"
+
+# Security permissions
+permissions:
+  - execute_code
+  - temporary_files
+  - process_execution
+
+# Plugin metadata
+keywords:
+  - lua
+  - scripting
+  - code-execution
+  - programming
+  - sandbox
+
+license: MIT
+homepage: https://github.com/GeneticxCln/OpenAgent
+repository: https://github.com/GeneticxCln/OpenAgent
+
+# Installation and usage notes
+installation_notes: |
+  This plugin requires Lua to be installed on your system.
+  
+  Install Lua:
+  - Ubuntu/Debian: sudo apt-get install lua5.4
+  - macOS: brew install lua
+  - Windows: Download from https://www.lua.org/download.html
+
+usage_examples:
+  - title: "Basic Hello World"
+    description: "Simple Lua script execution"
+    code: |
+      print("Hello from Lua!")
+      print("Current version:", _VERSION)
+  
+  - title: "Math Operations"
+    description: "Performing calculations in Lua"
+    code: |
+      local a, b = 10, 5
+      print("Sum:", a + b)
+      print("Product:", a * b)
+      print("Division:", a / b)
+  
+  - title: "Table Operations"
+    description: "Working with Lua tables"
+    code: |
+      local fruits = {"apple", "banana", "orange"}
+      for i, fruit in ipairs(fruits) do
+          print(i .. ". " .. fruit)
+      end
