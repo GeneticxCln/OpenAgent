@@ -94,7 +94,7 @@ def chat(
     device: str = typer.Option("auto", help="Device to run model on (auto/cpu/cuda)"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     debug: bool = typer.Option(False, help="Enable debug logging"),
-    unsafe_exec: bool = typer.Option(True, help="Allow actual command execution (default). Use --unsafe-exec=false to force explain-only mode."),
+    unsafe_exec: bool = typer.Option(True, "--unsafe-exec/--no-unsafe-exec", help="Allow actual command execution (default true). Use --no-unsafe-exec for explain-only mode."),
 ):
     """Start an interactive chat session with OpenAgent."""
     
@@ -257,7 +257,7 @@ def run(
     device: str = typer.Option("auto", help="Device to run model on"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     output_format: str = typer.Option("text", help="Output format (text/json)"),
-    unsafe_exec: bool = typer.Option(True, help="Allow actual command execution (default). Use --unsafe-exec=false to force explain-only mode."),
+    unsafe_exec: bool = typer.Option(True, "--unsafe-exec/--no-unsafe-exec", help="Allow actual command execution (default true). Use --no-unsafe-exec for explain-only mode."),
 ):
     """Run a single prompt through OpenAgent and exit."""
     

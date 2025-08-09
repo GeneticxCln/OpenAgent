@@ -409,51 +409,35 @@ class HuggingFaceLLM:
     ) -> str:
         """Format the prompt based on the model's expected format."""
         
-        # Default system prompt for code-focused models
+        # Better system prompts based on task type
         if system_prompt is None:
             if any(code_model in self.model_path.lower() for code_model in ["code", "coder", "star"]):
                 system_prompt = (
-                    "You are an expert programming assistant. You help users with coding tasks, "
-                    "debugging, explanations, and command-line operations. Provide clear, "
-                    "accurate, and helpful responses."
+                    "You are an expert programming and system administration assistant. "
+                    "Provide clear, concise, and practical answers. When explaining commands, "
+                    "include what they do and why. For code, provide working examples. "
+                    "Be direct and helpful."
                 )
             else:
                 system_prompt = (
-                    "You are a helpful AI assistant. Provide accurate, helpful, and "
-                    "informative responses to user questions."
+                    "You are a knowledgeable terminal assistant. Provide clear, concise, and "
+                    "practical answers to user questions about commands, coding, and system operations. "
+                    "Be direct and helpful."
                 )
         
-        # Format based on common patterns
-        if "llama" in self.model_path.lower():
-            # Llama format
-            if context:
-                conversation = ""
-                for msg in context:
-                    role = msg.get("role", "user")
-                    content = msg.get("content", "")
-                    if role == "user":
-                        conversation += f"[INST] {content} [/INST]\n"
-                    else:
-                        conversation += f"{content}\n"
-                formatted_prompt = f"[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{conversation}{prompt} [/INST]"
-            else:
-                formatted_prompt = f"[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{prompt} [/INST]"
-        
+        # Simplified formatting for better compatibility
+        if "llama" in self.model_path.lower() or "tiny" in self.model_path.lower():
+            # Simple format that works better with TinyLlama
+            formatted_prompt = f"<|system|>\n{system_prompt}\n\n<|user|>\n{prompt}\n\n<|assistant|>\n"
         elif "mistral" in self.model_path.lower():
             # Mistral format
             formatted_prompt = f"<s>[INST] {system_prompt}\n\n{prompt} [/INST]"
-        
         elif any(model in self.model_path.lower() for model in ["vicuna", "wizard", "openchat"]):
             # Vicuna/WizardCoder format
             formatted_prompt = f"### System:\n{system_prompt}\n\n### User:\n{prompt}\n\n### Assistant:\n"
-        
-        elif "zephyr" in self.model_path.lower():
-            # Zephyr format
-            formatted_prompt = f"<|system|>\n{system_prompt}</s>\n<|user|>\n{prompt}</s>\n<|assistant|>\n"
-        
         else:
-            # Generic format
-            formatted_prompt = f"System: {system_prompt}\n\nUser: {prompt}\n\nAssistant:"
+            # Simple generic format that most models understand
+            formatted_prompt = f"System: {system_prompt}\n\nHuman: {prompt}\n\nAssistant:"
         
         return formatted_prompt
     

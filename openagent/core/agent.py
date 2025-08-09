@@ -135,6 +135,7 @@ class Agent(BaseAgent):
     async def _generate_response(self, input_text: str) -> str:
         """
         Generate a response using the integrated Hugging Face LLM.
+        Attempts fast fallback first for common queries.
         
         Args:
             input_text: Input text to respond to
@@ -142,6 +143,16 @@ class Agent(BaseAgent):
         Returns:
             Generated response text
         """
+        # Import fallback functions locally to avoid circular imports
+        from ..core.fallback import can_handle_fast, handle_fast
+        
+        # Try fast fallback first for common queries
+        if can_handle_fast(input_text):
+            fallback_response = handle_fast(input_text)
+            if fallback_response:
+                logger.info(f"Using fast fallback response for query: {input_text[:50]}...")
+                return fallback_response
+        
         # Reset tools used tracking
         self._tools_used = []
         
