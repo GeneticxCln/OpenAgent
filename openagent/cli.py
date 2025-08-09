@@ -19,10 +19,15 @@ from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.markdown import Markdown
 
+from openagent.terminal.integration import install_snippet
+from openagent.terminal.validator import validate as validate_cmd, load_policy, save_policy, DEFAULT_POLICY, CONFIG_PATH
+
 from openagent.core.agent import Agent
 from openagent.core.llm import get_llm, ModelConfig
 from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 from openagent.core.config import Config
+from dotenv import load_dotenv
+import os
 
 # Initialize Rich console
 console = Console()
@@ -45,17 +50,21 @@ def setup_logging(debug: bool = False):
 def create_agent(
     model_name: str = "tiny-llama",
     device: str = "auto",
-    load_in_4bit: bool = True
+    load_in_4bit: bool = True,
+    unsafe_exec: bool = False,
 ) -> Agent:
     """Create and configure an OpenAgent instance."""
     
     # LLM configuration for efficient operation
+    hf_token = os.getenv("HUGGINGFACE_TOKEN") or os.getenv("HF_TOKEN")
     llm_config = {
         "device": device,
         "load_in_4bit": load_in_4bit,
         "temperature": 0.7,
         "max_length": 2048,
     }
+    if hf_token:
+        llm_config["hf_token"] = hf_token
     
     # Create agent with tools
     agent = Agent(
@@ -63,10 +72,11 @@ def create_agent(
         description="I'm an AI assistant that helps with terminal operations, coding, and system administration. I can execute commands, manage files, analyze code, and provide technical guidance.",
         model_name=model_name,
         llm_config=llm_config,
+        safe_mode=not unsafe_exec,
     )
     
-    # Add powerful tools
-    agent.add_tool(CommandExecutor())
+    # Add powerful tools (default to explain-only unless --unsafe-exec is used)
+    agent.add_tool(CommandExecutor(default_explain_only=not unsafe_exec))
     agent.add_tool(FileManager())
     agent.add_tool(SystemInfo())
     
@@ -79,10 +89,12 @@ def chat(
     device: str = typer.Option("auto", help="Device to run model on (auto/cpu/cuda)"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     debug: bool = typer.Option(False, help="Enable debug logging"),
+    unsafe_exec: bool = typer.Option(False, help="Allow actual command execution (unsafe). By default, commands are only explained."),
 ):
     """Start an interactive chat session with OpenAgent."""
     
     setup_logging(debug)
+    load_dotenv()
     
     console.print(Panel.fit(
         "[bold blue]OpenAgent Terminal Assistant[/bold blue]\n"
@@ -91,9 +103,9 @@ def chat(
         title="🤖 Welcome"
     ))
     
-    # Create agent
+# Create agent
     global agent
-    agent = create_agent(model, device, load_in_4bit)
+    agent = create_agent(model, device, load_in_4bit, unsafe_exec) 
     
     console.print("\\n[dim]Initializing AI model... This may take a moment.[/dim]")
     
@@ -175,9 +187,10 @@ async def handle_special_command(command: str) -> bool:
         ))
         return True
     
-    elif command == "/status":
+    if command == "/status":
         status = agent.get_status()
         model_info = agent.llm.get_model_info()
+        safe_mode = agent.config.get("safe_mode", True) if hasattr(agent, "config") else True
         
         console.print(Panel(
             f"""[bold]Agent Status:[/bold]
@@ -188,17 +201,18 @@ Loaded: {model_info['loaded']}
 Tools: {status['tools_count']} ({', '.join(status['tools'])})
 Messages: {status['message_history_length']}
 Processing: {status['is_processing']}
+Safe Mode (explain-only commands): {safe_mode}
 """,
             title="Status"
         ))
         return True
     
-    elif command == "/reset":
+    if command == "/reset":
         agent.reset()
         console.print("[green]Conversation history reset![/green]")
         return True
     
-    elif command == "/models":
+    if command == "/models":
         console.print(Panel(
             f"""[bold]Available Models:[/bold]
 
@@ -215,21 +229,20 @@ Processing: {status['is_processing']}
         ))
         return True
     
-    elif command == "/system":
+    if command == "/system":
         # Use the system info tool
         system_tool = SystemInfo()
         result = await system_tool.execute("overview")
         console.print(Panel(result.content, title="System Information"))
         return True
     
-    elif command == "/quit":
+    if command == "/quit":
         console.print("[yellow]Goodbye![/yellow]")
         return False
     
-    else:
-        console.print(f"[red]Unknown command: {command}[/red]")
-        console.print("[dim]Type /help for available commands[/dim]")
-        return True
+    console.print(f"[red]Unknown command: {command}[/red]")
+    console.print("[dim]Type /help for available commands[/dim]")
+    return True
 
 
 @app.command()
@@ -239,13 +252,15 @@ def run(
     device: str = typer.Option("auto", help="Device to run model on"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     output_format: str = typer.Option("text", help="Output format (text/json)"),
+    unsafe_exec: bool = typer.Option(False, help="Allow actual command execution (unsafe)"),
 ):
     """Run a single prompt through OpenAgent and exit."""
     
+    load_dotenv()
     console.print("[dim]Initializing...[/dim]")
     
     # Create agent
-    agent = create_agent(model, device, load_in_4bit)
+    agent = create_agent(model, device, load_in_4bit, unsafe_exec)
     
     async def run_single():
         with console.status("[bold green]Processing...", spinner="dots"):
@@ -346,6 +361,94 @@ def analyze(
     except Exception as e:
         console.print(f"[red]Error reading file: {e}[/red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def validate(
+    command: str = typer.Argument(..., help="Shell command to validate"),
+    quiet: bool = typer.Option(False, help="Print only the decision (allow/warn/block)"),
+):
+    """Validate a command against OpenAgent's policy (allow/warn/block)."""
+    decision, reason = validate_cmd(command)
+    if quiet:
+        console.print(decision)
+    else:
+        console.print(Panel(f"Decision: [bold]{decision}[/bold]\nReason: {reason}", title="Validation"))
+
+
+@app.command()
+def policy(
+    action: str = typer.Argument(..., help="Action: show|reset|set-default|add-allow|remove-allow|block-risky|unblock-risky"),
+    key: str = typer.Argument(None, help="Command for allowlist updates or default value"),
+    value: str = typer.Argument(None, help="Value for the action (flag prefix or default decision)"),
+):
+    """Manage OpenAgent terminal policy stored in ~/.config/openagent/policy.yaml."""
+    p = load_policy()
+    if action == "show":
+        import json
+        console.print(Panel(str(CONFIG_PATH), title="Policy File"))
+        console.print_json(data=p)
+        return
+    if action == "reset":
+        save_policy(DEFAULT_POLICY.copy())
+        console.print("[green]Policy reset to defaults[/green]")
+        return
+    if action == "set-default":
+        if value not in {"allow", "warn", "block"}:
+            console.print("[red]Default must be one of allow|warn|block[/red]")
+            raise typer.Exit(1)
+        p["default_decision"] = value
+        save_policy(p)
+        console.print(f"[green]Default decision set to {value}[/green]")
+        return
+    if action == "add-allow":
+        if not key or not value:
+            console.print("[red]Usage: policy add-allow <command> <flag_prefix>[/red]")
+            raise typer.Exit(1)
+        p.setdefault("allowlist", {}).setdefault(key, []).append(value)
+        save_policy(p)
+        console.print(f"[green]Added allow flag '{value}' for command '{key}'[/green]")
+        return
+    if action == "remove-allow":
+        if not key or not value:
+            console.print("[red]Usage: policy remove-allow <command> <flag_prefix>[/red]")
+            raise typer.Exit(1)
+        flags = p.setdefault("allowlist", {}).setdefault(key, [])
+        if value in flags:
+            flags.remove(value)
+        save_policy(p)
+        console.print(f"[green]Removed allow flag '{value}' for command '{key}'[/green]")
+        return
+    if action == "block-risky":
+        p["block_risky"] = True
+        save_policy(p)
+        console.print("[green]Risky commands will be blocked[/green]")
+        return
+    if action == "unblock-risky":
+        p["block_risky"] = False
+        save_policy(p)
+        console.print("[green]Risky commands will not be blocked (may still warn)" )
+        return
+    console.print("[red]Unknown action[/red]")
+
+
+@app.command()
+def integrate(
+    shell: str = typer.Option("zsh", help="Shell to integrate with (zsh or bash)"),
+    apply: bool = typer.Option(False, help="Append the integration snippet to your shell rc file"),
+):
+    """Show or apply shell integration to bring OpenAgent into your terminal."""
+    try:
+        rc_path, snippet = install_snippet(shell, apply=apply)
+        if apply:
+            console.print(Panel(
+                f"Installed OpenAgent integration into {rc_path}.\n\nEnable features by setting env vars in your rc file, e.g.:\nexport OPENAGENT_EXPLAIN=1\nexport OPENAGENT_WARN=1\n\nRestart your shell or run: source {rc_path}",
+                title="Shell Integration Applied"
+            ))
+        else:
+            console.print(Panel(snippet, title="Add this to your .zshrc"))
+    except Exception as e:
+        console.print(f"[red]Failed to set up integration: {e}[/red]")
 
 
 @app.command()

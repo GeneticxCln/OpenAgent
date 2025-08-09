@@ -23,12 +23,15 @@ class CommandExecutor(BaseTool):
     Tool for executing shell commands safely with security checks.
     """
     
-    def __init__(self, **kwargs):
+    def __init__(self, default_explain_only: bool = True, **kwargs):
         super().__init__(
             name="command_executor",
             description="Execute shell commands with safety checks and explanations",
             **kwargs
         )
+        
+        # Default behavior: explain commands rather than execute
+        self.default_explain_only = default_explain_only
         
         # Dangerous commands that should be restricted
         self.dangerous_commands = {
@@ -51,10 +54,10 @@ class CommandExecutor(BaseTool):
         try:
             if isinstance(input_data, dict):
                 command = input_data.get("command", "")
-                explain_only = input_data.get("explain_only", False)
+                explain_only = input_data.get("explain_only", self.default_explain_only)
             else:
                 command = str(input_data).strip()
-                explain_only = False
+                explain_only = self.default_explain_only
             
             if not command:
                 return ToolResult(
@@ -79,7 +82,7 @@ class CommandExecutor(BaseTool):
                 return ToolResult(
                     success=True,
                     content=explanation,
-                    metadata={"command": command, "explained": True}
+                    metadata={"command": command, "explained": True, "explain_only_default": self.default_explain_only}
                 )
             
             # Execute the command
@@ -234,7 +237,8 @@ class CommandExecutor(BaseTool):
             if flags:
                 flags_info = f" with flags: {', '.join(flags)}"
         
-        return f"{base_explanation}{flags_info}"
+        # Include the command name in the explanation for clarity
+        return f"{main_cmd}: {base_explanation}{flags_info}"
 
 
 class FileManager(BaseTool):

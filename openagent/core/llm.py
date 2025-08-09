@@ -228,6 +228,13 @@ class HuggingFaceLLM:
             
             logger.info("Model loaded successfully")
             
+        except torch.cuda.OutOfMemoryError as e:
+            logger.error(f"CUDA OOM while loading model: {e}. Falling back to CPU.")
+            # Fallback to CPU
+            self.device = "cpu"
+            await self.unload_model()
+            await asyncio.sleep(0)
+            await self.load_model()
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
             raise AgentError(f"Failed to load model {self.model_path}: {e}")
@@ -291,6 +298,20 @@ class HuggingFaceLLM:
             
             return response
             
+        except torch.cuda.OutOfMemoryError as e:
+            logger.error(f"CUDA OOM during generation: {e}. Retrying on CPU.")
+            # Retry on CPU once
+            if self.device != "cpu":
+                self.device = "cpu"
+                await self.unload_model()
+                await self.load_model()
+                return await self.generate_response(
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    system_prompt=system_prompt,
+                    context=context,
+                )
+            raise AgentError("Out of memory while generating response. Try a smaller model or CPU mode.")
         except Exception as e:
             logger.error(f"Error generating response: {e}")
             raise AgentError(f"Failed to generate response: {e}")

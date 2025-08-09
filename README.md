@@ -11,7 +11,7 @@ A powerful, production-ready AI agent framework powered by Hugging Face models, 
 - **🛠️ Advanced Tools** - System monitoring, file management, command execution
 - **🎨 Rich CLI Interface** - Beautiful terminal interface with syntax highlighting
 - **🔒 Security First** - Safe command execution with built-in security checks
-- **📱 Multiple Interfaces** - CLI chat, single commands, API server
+- **📱 Multiple Interfaces** - CLI chat and single commands (API server planned)
 
 ## 🏁 Quick Start
 
@@ -101,6 +101,30 @@ openagent run "How do I optimize this Docker build process?"
 - `phi-2` - Microsoft's efficient model (2.7B params)
 - `stable-code` - Stability AI's code model (3B params)
 
+## 📦 Build a standalone binary
+
+You can package OpenAgent into a single-file executable for easy distribution (no Python required for end users).
+
+Linux/macOS/Windows (via PyInstaller)
+- Create and use a virtual environment
+- Install dependencies (per README Quick Start), then run:
+
+```bash
+# Linux/macOS
+chmod +x scripts/build_binary.sh
+./scripts/build_binary.sh --python venv/bin/python --name openagent --output dist
+# Windows (PowerShell)
+# py -m pip install pyinstaller
+# py -m PyInstaller --onefile --name openagent openagent/cli.py
+```
+
+The output binary will be in dist/. On Linux/macOS, rename it or distribute as-is (e.g., openagent or openagent.bin). On Windows, it will be openagent.exe.
+
+Notes
+- First run on a new machine will download your chosen model from Hugging Face (unless cached).
+- For smaller footprint, ship without GPU torch and instruct end-users to use CPU mode or a tiny model.
+- For Linux-only distribution, consider an AppImage wrapper; we can add this on request.
+
 ## 🛠️ Advanced Features
 
 ### System Operations
@@ -169,12 +193,14 @@ OpenAgent/
 │   ├── tools/         # Built-in tools
 │   │   └── system.py  # Terminal/system tools
 │   └── cli.py         # Command line interface
-├── tests/             # Test suite
-├── docs/              # Documentation
-└── examples/          # Usage examples
+├── tests/             # Test suite (planned)
+├── docs/              # Documentation (planned)
+└── examples/          # Usage examples (planned)
 ```
 
 ## 🔧 Development
+
+Note: This project is currently CLI-first and focused on local usage. An API server and additional interfaces are planned but not yet implemented.
 
 ### Setup Development Environment
 ```bash
@@ -256,6 +282,17 @@ cd OpenAgent
 python setup.py dev
 python setup.py test
 ```
+
+## 🗺️ Roadmap
+
+- Short term
+  - Safer default command handling (explain-only by default) with opt-in execution
+  - Environment-based configuration and Hugging Face token support
+  - Better error handling and model fallback to CPU on OOM
+- Medium term
+  - Minimal API server (FastAPI) with auth/rate limiting
+  - Tests, docs, and examples directory
+  - Stronger sandboxing for command execution
 
 ## 📊 Comparison with Other Tools
 
