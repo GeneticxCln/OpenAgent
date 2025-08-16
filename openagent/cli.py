@@ -261,10 +261,20 @@ def chat(
     # Resolve automatic model choice (prompt for Gemini key if missing)
     resolved_model = model
     if model == "auto":
-        # If no key, ask the user once
-        if not os.getenv("GEMINI_API_KEY"):
-            _ensure_gemini_key_interactive()
-        resolved_model = "gemini-1.5-flash" if os.getenv("GEMINI_API_KEY") else "tiny-llama"
+        # Prefer local Ollama if available
+        try:
+            import asyncio as _asyncio
+            from openagent.core.llm_ollama import get_default_ollama_model
+            m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
+        except Exception:
+            m = None
+        if m:
+            resolved_model = f"ollama:{m}"
+        else:
+            # If no key, ask the user once (optional)
+            if not os.getenv("GEMINI_API_KEY"):
+                _ensure_gemini_key_interactive()
+            resolved_model = "gemini-1.5-flash" if os.getenv("GEMINI_API_KEY") else "tiny-llama"
 
     console.print(Panel.fit(
         "[bold blue]OpenAgent Terminal Assistant[/bold blue]\n"

@@ -241,6 +241,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Implement inline streaming using shared generator
                 async def _stream_tokens_sse(agent_obj, message: str):
                     llm = getattr(agent_obj, 'llm', None)
+                    # True streaming via agent or provider
                     try:
                         if hasattr(agent_obj, 'stream_message') and callable(getattr(agent_obj, 'stream_message')):
                             async for token in agent_obj.stream_message(message):
@@ -255,11 +256,10 @@ async def websocket_endpoint(ws: WebSocket):
                             return
                     except Exception:
                         pass
+                    # No streaming available; yield full once
                     resp = await agent_obj.process_message(message)
                     content = resp.content if hasattr(resp, 'content') else str(resp)
-                    for word in content.split(' '):
-                        yield word + ' '
-                        await asyncio.sleep(0)
+                    yield content
                 async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
                     await ws.send_text(json.dumps({"content": chunk}))
                 await ws.send_text(json.dumps({"event": "end"}))
@@ -348,11 +348,10 @@ async def websocket_chat(ws: WebSocket):
                             return
                     except Exception:
                         pass
+                    # No streaming: yield full once
                     resp = await agent_obj.process_message(message)
                     content = resp.content if hasattr(resp, 'content') else str(resp)
-                    for word in content.split(' '):
-                        yield word + ' '
-                        await asyncio.sleep(0)
+                    yield content
                 async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
                     await ws.send_text(json.dumps({"content": chunk}))
                 await ws.send_text(json.dumps({"event": "end"}))
@@ -585,12 +584,10 @@ async def chat_stream(
                 return
         except Exception:
             pass
-        # Fallback: generate full, then chunk
+        # No streaming available: yield full once
         resp = await agent.process_message(message)
         content = resp.content if hasattr(resp, 'content') else str(resp)
-        for word in content.split(' '):
-            yield word + ' '
-            await asyncio.sleep(0)
+        yield content
 
     async def event_generator():
         try:
