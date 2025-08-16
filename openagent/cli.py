@@ -1022,7 +1022,7 @@ def validate(
 
 @app.command()
 def policy(
-    action: str = typer.Argument(..., help="Action: show|reset|set-default|add-allow|remove-allow|block-risky|unblock-risky"),
+    action: str = typer.Argument(..., help="Action: show|reset|set-default|add-allow|remove-allow|block-risky|unblock-risky|strict|relaxed"),
     key: str = typer.Argument(None, help="Command for allowlist updates or default value"),
     value: str = typer.Argument(None, help="Value for the action (flag prefix or default decision)"),
 ):
@@ -1074,6 +1074,18 @@ def policy(
         p["block_risky"] = False
         save_policy(p)
         console.print("[green]Risky commands will not be blocked (may still warn)" )
+        return
+    if action == "strict":
+        p["default_decision"] = "block"
+        p["block_risky"] = True
+        save_policy(p)
+        console.print("[green]Policy set to STRICT (block-by-default, risky blocked).[/green]")
+        return
+    if action == "relaxed":
+        p["default_decision"] = "warn"
+        p["block_risky"] = True
+        save_policy(p)
+        console.print("[green]Policy set to RELAXED (warn-by-default, risky blocked).[/green]")
         return
     console.print("[red]Unknown action[/red]")
 

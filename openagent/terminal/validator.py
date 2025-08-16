@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple
 
 DEFAULT_POLICY = {
     "risky_patterns": [
-        "rm", "rmdir", "mkfs", "fdisk", "dd", "chmod 777", "chown", "killall"
+        "rm -rf", "rm -r", "mkfs", "fdisk", "dd ", "chmod 777", "chmod -R 777", "chown ", "killall", "sudo rm", "rm /", "rm -rf /"
     ],
     "allowlist": {
         # command: allowed flags (prefix match), empty list means no restriction on flags
@@ -21,8 +21,11 @@ DEFAULT_POLICY = {
         "python": [],
         "pip": ["install", "list", "show"],
         "git": ["status", "log", "diff", "show", "add", "commit", "push", "pull", "fetch", "checkout", "switch", "rebase"],
+        "docker": ["ps", "images", "pull", "run", "logs", "exec", "stop", "start"],
+        "pacman": ["-S", "-Ss", "-Qi", "-Qs", "-Sy"],
+        "curl": ["-I", "-s", "-L", "--head", "--silent"],
     },
-    "default_decision": "warn"  # allow | warn | block
+    "default_decision": "block"  # allow | warn | block
 }
 
 CONFIG_PATH = Path.home() / ".config" / "openagent" / "policy.yaml"
