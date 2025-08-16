@@ -258,7 +258,18 @@ OpenAgent/
 └── examples/          # Usage examples (planned)
 ```
 
-## 🔧 Development
+# 🔧 Development
+
+### Pre-commit hooks
+To keep code quality consistent, install and enable pre-commit hooks:
+
+```bash
+pip install pre-commit
+./scripts/install_precommit.sh
+# or manually:
+# pre-commit install
+# pre-commit run --all-files
+```
 
 Note: This project remains CLI-first, but an API server and WebSocket interface are implemented in alpha. Expect breaking changes while server APIs stabilize.
 
