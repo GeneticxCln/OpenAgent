@@ -65,14 +65,50 @@ uvicorn openagent.server.app:app --host 0.0.0.0 --port 8000
 ```
 
 #### Streaming
-- WebSocket: send a CHAT message with {"stream": true}
-- SSE: POST /chat/stream
+- WebSocket: ws(s)://HOST/ws/chat (default path). Send a JSON payload and receive incremental JSON messages like {"content":"...","event":"chunk"} with a final {"event":"end"}.
+- SSE: POST /chat/stream (server-sent events)
 
 ```bash
 curl -N -H "Accept: text/event-stream" -H "Content-Type: application/json" \
   -d '{"message":"explain binary search in python","agent":"default"}' \
   http://localhost:8000/chat/stream
 ```
+
+### CLI Streaming (SSE/WS) and Auth
+
+The chat CLI can stream responses from the API server via SSE or WebSocket, and supports authenticated servers.
+
+Examples:
+
+- Use API server with SSE streaming (default):
+  - OPENAGENT_API_URL=http://localhost:8000 openagent chat
+  - or: openagent chat --api-url http://localhost:8000
+
+- Force WebSocket streaming with optional custom path:
+  - openagent chat --api-url http://localhost:8000 --ws
+  - openagent chat --api-url https://api.example.com --ws --ws-path /ws/chat
+
+- Provide an API token for Authorization headers (Bearer by default):
+  - openagent chat --api-url https://api.example.com --api-token $TOKEN
+  - OPENAGENT_API_TOKEN=$TOKEN openagent chat --api-url https://api.example.com
+
+- Customize the auth scheme or pass raw token (no prefix):
+  - openagent chat --api-url https://api.example.com --api-token $TOKEN --auth-scheme ""
+
+- Include the token as a query parameter on the WS URL (if your server expects it):
+  - openagent chat --api-url https://api.example.com --ws --api-token $TOKEN --ws-token-query-key token
+
+- Disable streaming (use full-response HTTP):
+  - openagent chat --api-url https://api.example.com --no-stream
+
+Notes:
+- If --ws is set and WebSocket connection fails (or the websockets package is not installed), the CLI automatically falls back to SSE; if SSE fails, it falls back to non-streaming.
+- For WS, the URL is derived from the API base: http(s) - ws(s), host preserved, path from --ws-path (default /ws/chat). Authorization header and/or token query param can be sent.
+- For SSE and non-streaming HTTP, the Authorization header is included when an API token is provided.
+
+Example clients:
+- Python: examples/ws_client.py
+- JavaScript (Node 18+): examples/ws_client.js
 
 ## 🎯 Usage Examples
 

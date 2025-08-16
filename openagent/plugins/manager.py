@@ -12,7 +12,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, Set, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -66,7 +66,7 @@ class PluginManager:
         
         # Manager state
         self._is_initialized = False
-        self._startup_time = datetime.utcnow()
+self._startup_time = datetime.now(timezone.utc)
         
         logger.info(f"PluginManager initialized with plugin directory: {self.plugin_dir}")
     
@@ -583,7 +583,7 @@ class PluginManager:
         return {
             "initialized": self._is_initialized,
             "startup_time": self._startup_time.isoformat(),
-            "uptime": (datetime.utcnow() - self._startup_time).total_seconds(),
+"uptime": (datetime.now(timezone.utc) - self._startup_time).total_seconds(),
             "total_plugins": len(self._plugins),
             "active_plugins": len([p for p in self._plugins.values() if p.is_active]),
             "loaded_plugins": len([p for p in self._plugins.values() if p.is_loaded]),

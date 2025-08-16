@@ -185,14 +185,36 @@ curl -H "Authorization: Bearer <token>" http://localhost:8000/agents
 - `GET /models` - List available models
 - `GET /health` - Health check
 
-### WebSocket Support (Coming Soon)
+### WebSocket Support
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/ws');
-ws.send(JSON.stringify({
-    type: 'chat',
-    message: 'Hello, agent!',
-    stream: true
-}));
+const ws = new WebSocket('ws://localhost:8000/ws/chat');
+ws.onmessage = (ev) => {
+  const data = JSON.parse(ev.data);
+  if (data.content) process.stdout.write(data.content);
+  if (data.event === 'end') console.log('\n');
+};
+ws.onopen = () => ws.send(JSON.stringify({ message: 'Hello, agent!' }));
+```
+
+### CLI Streaming and Authentication
+```bash
+# SSE (default when API URL is set)
+OPENAGENT_API_URL=http://localhost:8000 openagent chat
+
+# WebSocket streaming
+openagent chat --api-url http://localhost:8000 --ws
+
+# Auth header (Bearer by default)
+openagent chat --api-url https://api.example.com --api-token $TOKEN
+
+# Raw token without scheme prefix
+openagent chat --api-url https://api.example.com --api-token $TOKEN --auth-scheme ""
+
+# WS token via query parameter (server expects ?token=...)
+openagent chat --api-url https://api.example.com --ws --api-token $TOKEN --ws-token-query-key token
+
+# Disable streaming
+openagent chat --api-url https://api.example.com --no-stream
 ```
 
 ## 🔧 Configuration

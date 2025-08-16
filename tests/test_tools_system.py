@@ -24,7 +24,8 @@ async def test_command_executor_rejects_dangerous():
     # Still should reject dangerous commands when execution requested
     result = await tool.execute({"command": "rm -rf /", "explain_only": False})
     assert result.success is False
-    assert "rejected" in (result.error or "").lower()
+    # Policy engine returns "denied" not "rejected"
+    assert "denied" in (result.error or "").lower() or "policy" in (result.error or "").lower()
 
 
 async def test_file_manager_write_and_read(tmp_path):
@@ -68,8 +69,9 @@ class TestCommandExecutorAdvanced:
         for cmd in SAMPLE_COMMANDS["risky"][:3]:  # Test first 3
             result = await tool.execute({"command": cmd, "explain_only": False})
             assert result.success is False
+            # Accept various policy rejection wordings
             assert any(word in (result.error or "").lower() 
-                      for word in ["rejected", "security", "dangerous"])
+                      for word in ["denied", "blocked", "rejected", "dangerous", "policy", "denylist", "security"])
     
     async def test_command_timeout(self):
         """Test command execution timeout."""
@@ -85,7 +87,7 @@ class TestCommandExecutorAdvanced:
                 "execution_time": 30.0
             }
             
-            result = await tool.execute({"command": "sleep 60", "explain_only": False})
+            result = await tool.execute({"command": "sleep 60", "explain_only": False, "confirm": True})
             assert result.success is False
             assert "timeout" in result.error.lower()
     

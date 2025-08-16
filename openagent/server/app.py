@@ -180,7 +180,7 @@ async def request_context_middleware(request: Request, call_next):
 
 # WebSocket support
 from fastapi import WebSocket, WebSocketDisconnect
-from openagent.websocket import WebSocketManager, WebSocketHandler, WebSocketMessage, MessageType
+from openagent.websocket import WebSocketManager, WebSocketHandler, WebSocketMessage, MessageType, ConnectionInfo
 
 ws_manager = WebSocketManager()
 
@@ -205,7 +205,9 @@ ws_handler = WebSocketHandler(
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    """Handle WebSocket connections for real-time communication."""
+    """Handle WebSocket connections for real-time communication.
+    This legacy path does not enforce auth; prefer /ws/chat for CLI compatibility.
+    """
     info = ConnectionInfo()
     info.client_ip = ws.client.host if ws.client else None
     info.user_agent = ws.headers.get("user-agent")
@@ -219,7 +221,61 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        # Send error then close
+        try:
+            await ws_manager.send_message(connection_id, WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}))
+        except Exception:
+            pass
+    finally:
+        await ws_manager.disconnect(connection_id)
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat(ws: WebSocket):
+    """WebSocket chat endpoint that supports Authorization header or token query.
+    Aligns with CLI defaults (path /ws/chat) and optional auth.
+    """
+    # Extract token from Authorization header ("Bearer ...") or query (?token=...)
+    token = None
+    auth_header = ws.headers.get("authorization") or ws.headers.get("Authorization")
+    if auth_header:
+        parts = auth_header.split(" ", 1)
+        token = parts[1] if len(parts) == 2 else parts[0]
+    if not token:
+        # Common query names: token, access_token, auth
+        qp = ws.query_params
+        token = qp.get("token") or qp.get("access_token") or qp.get("auth")
+
+    # If auth is enabled, require a valid token
+    if getattr(auth_manager.config, "auth_enabled", False):
+        payload = await _verify_token(token) if token else None
+        if not payload:
+            await ws.close(code=1008, reason="Unauthorized")
+            return
+
+    # Build connection info
+    info = ConnectionInfo()
+    info.client_ip = ws.client.host if ws.client else None
+    info.user_agent = ws.headers.get("user-agent")
+    # Mark as authenticated in info if supported by model
+    try:
+        if token:
+            # Some ConnectionInfo models may expose is_authenticated or auth_token
+            if hasattr(info, "is_authenticated"):
+                info.is_authenticated = True
+            elif hasattr(info, "auth_token"):
+                info.auth_token = "present"
+    except Exception:
+        pass
+
+    connection_id = await ws_manager.accept(ws, info)
+
+    try:
+        while True:
+            raw_text = await ws.receive_text()
+            await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
         try:
             await ws_manager.send_message(connection_id, WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}))
         except Exception:

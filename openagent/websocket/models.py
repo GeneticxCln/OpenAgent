@@ -7,7 +7,7 @@ for real-time communication.
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
@@ -75,7 +75,7 @@ class WebSocketMessage(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: MessageType = Field(..., description="Message type")
     data: Dict[str, Any] = Field(default_factory=dict, description="Message data")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Optional fields
     agent: Optional[str] = Field(None, description="Target agent name")
@@ -150,8 +150,8 @@ class ConnectionInfo(BaseModel):
     
     # Connection details
     status: ConnectionStatus = ConnectionStatus.CONNECTING
-    connected_at: datetime = Field(default_factory=datetime.utcnow)
-    last_activity: datetime = Field(default_factory=datetime.utcnow)
+    connected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Client information
     client_ip: Optional[str] = None
@@ -174,7 +174,7 @@ class ConnectionInfo(BaseModel):
     
     def update_activity(self) -> None:
         """Update last activity timestamp."""
-        self.last_activity = datetime.utcnow()
+        self.last_activity = datetime.now(timezone.utc)
     
     def increment_sent(self, byte_count: int = 0) -> None:
         """Increment sent message counter."""
@@ -190,7 +190,7 @@ class ConnectionInfo(BaseModel):
     
     def get_stats(self) -> Dict[str, Any]:
         """Get connection statistics."""
-        uptime = (datetime.utcnow() - self.connected_at).total_seconds()
+        uptime = (datetime.now(timezone.utc) - self.connected_at).total_seconds()
         
         return {
             "connection_id": self.connection_id,
@@ -228,8 +228,8 @@ class AgentInteraction(BaseModel):
     interaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     agent_name: str
     user_id: str
-    started_at: datetime = Field(default_factory=datetime.utcnow)
-    last_message_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_message_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Message history
     message_count: int = 0
@@ -242,7 +242,7 @@ class AgentInteraction(BaseModel):
     def add_message(self, message: WebSocketMessage) -> None:
         """Add a message to this interaction."""
         self.message_count += 1
-        self.last_message_at = datetime.utcnow()
+        self.last_message_at = datetime.now(timezone.utc)
     
     def get_duration(self) -> float:
         """Get interaction duration in seconds."""
@@ -260,7 +260,7 @@ class Room(BaseModel):
     max_participants: int = 10
     
     # Room state
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
     is_private: bool = False
     

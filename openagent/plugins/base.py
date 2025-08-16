@@ -7,7 +7,7 @@ with proper validation, security, and lifecycle management.
 
 import abc
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 from dataclasses import dataclass, field
@@ -63,8 +63,8 @@ class PluginMetadata:
     keywords: List[str] = field(default_factory=list)
     
     # Internal metadata
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     checksum: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
@@ -107,8 +107,8 @@ class PluginMetadata:
             repository=data.get("repository"),
             license=data.get("license", "MIT"),
             keywords=data.get("keywords", []),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.utcnow().isoformat())),
-            updated_at=datetime.fromisoformat(data.get("updated_at", datetime.utcnow().isoformat())),
+created_at=datetime.fromisoformat(data.get("created_at", datetime.now(timezone.utc).isoformat())),
+            updated_at=datetime.fromisoformat(data.get("updated_at", datetime.now(timezone.utc).isoformat())),
             checksum=data.get("checksum")
         )
 
@@ -235,7 +235,7 @@ class PluginBase(abc.ABC):
         self._status = status
         self._error = error
         if status == PluginStatus.LOADED:
-            self._loaded_at = datetime.utcnow()
+self._loaded_at = datetime.now(timezone.utc)
     
     def _update_metric(self, key: str, value: Any) -> None:
         """Update a plugin metric."""

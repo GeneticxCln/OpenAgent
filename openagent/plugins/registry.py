@@ -10,7 +10,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import sqlite3
 import aiosqlite
 
@@ -65,7 +65,7 @@ class PluginRegistry:
         
         try:
             # Update timestamp
-            metadata.updated_at = datetime.utcnow()
+metadata.updated_at = datetime.now(timezone.utc)
             
             # Store in database
             async with aiosqlite.connect(self.storage_path) as db:
@@ -332,7 +332,7 @@ class PluginRegistry:
                 by_type = {row[0]: row[1] for row in await cursor.fetchall()}
                 
                 # Recent registrations (last 7 days)
-                seven_days_ago = (datetime.utcnow() - timedelta(days=7)).isoformat()
+seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
                 cursor = await db.execute(
                     "SELECT COUNT(*) FROM plugins WHERE created_at >= ?",
                     (seven_days_ago,)
@@ -372,7 +372,7 @@ class PluginRegistry:
             
             with open(export_path, 'w') as f:
                 json.dump({
-                    "exported_at": datetime.utcnow().isoformat(),
+"exported_at": datetime.now(timezone.utc).isoformat(),
                     "total_plugins": len(plugins),
                     "plugins": plugins
                 }, f, indent=2)

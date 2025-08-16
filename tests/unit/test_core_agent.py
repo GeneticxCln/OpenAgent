@@ -147,10 +147,10 @@ class TestAgent:
     @pytest.mark.asyncio
     async def test_process_message_string(self):
         """Test processing string messages."""
-        with patch('openagent.core.agent.HuggingFaceLLM') as mock_llm_class:
+        with patch('openagent.core.agent.get_llm') as mock_get_llm:
             mock_llm = AsyncMock()
             mock_llm.generate_response.return_value = "Test response"
-            mock_llm_class.return_value = mock_llm
+            mock_get_llm.return_value = mock_llm
             
             agent = Agent(
                 name=self.agent_name,
@@ -169,10 +169,10 @@ class TestAgent:
     @pytest.mark.asyncio
     async def test_process_message_object(self):
         """Test processing BaseMessage objects."""
-        with patch('openagent.core.agent.HuggingFaceLLM') as mock_llm_class:
+        with patch('openagent.core.agent.get_llm') as mock_get_llm:
             mock_llm = AsyncMock()
             mock_llm.generate_response.return_value = "Test response"
-            mock_llm_class.return_value = mock_llm
+            mock_get_llm.return_value = mock_llm
             
             agent = Agent(
                 name=self.agent_name,
@@ -190,10 +190,10 @@ class TestAgent:
     @pytest.mark.asyncio
     async def test_concurrent_processing_blocked(self):
         """Test that concurrent message processing is blocked."""
-        with patch('openagent.core.agent.HuggingFaceLLM') as mock_llm_class:
+        with patch('openagent.core.agent.get_llm') as mock_get_llm:
             mock_llm = AsyncMock()
             mock_llm.generate_response.return_value = "Test response"
-            mock_llm_class.return_value = mock_llm
+            mock_get_llm.return_value = mock_llm
             
             agent = Agent(
                 name=self.agent_name,
@@ -259,10 +259,10 @@ class TestAgent:
         """Test that tools are executed during message processing."""
         mock_tool = MockTool("test_tool")
         
-        with patch('openagent.core.agent.HuggingFaceLLM') as mock_llm_class:
+        with patch('openagent.core.agent.get_llm') as mock_get_llm:
             mock_llm = AsyncMock()
-            mock_llm.generate_response.return_value = "Response with tool results"
-            mock_llm_class.return_value = mock_llm
+            mock_llm.generate_response.return_value = "Test response"
+            mock_get_llm.return_value = mock_llm
             
             agent = Agent(
                 name=self.agent_name,
@@ -280,13 +280,13 @@ class TestAgent:
                 assert mock_tool.execution_count == 1
                 assert "test_tool" in agent._tools_used
                 
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_error_handling_in_message_processing(self):
         """Test error handling during message processing."""
-        with patch('openagent.core.agent.HuggingFaceLLM') as mock_llm_class:
+        with patch('openagent.core.agent.get_llm') as mock_get_llm:
             mock_llm = AsyncMock()
-            mock_llm.generate_response.side_effect = Exception("LLM Error")
-            mock_llm_class.return_value = mock_llm
+            mock_llm.generate_response.side_effect = Exception("LLM error")
+            mock_get_llm.return_value = mock_llm
             
             agent = Agent(
                 name=self.agent_name,

@@ -8,7 +8,6 @@ live agent interactions, and multi-client orchestration.
 from .manager import WebSocketManager
 from .handler import WebSocketHandler
 from .models import WebSocketMessage, MessageType, ConnectionInfo
-from .middleware import WebSocketMiddleware
 
 __all__ = [
     "WebSocketManager",
@@ -16,5 +15,4 @@ __all__ = [
     "WebSocketMessage",
     "MessageType",
     "ConnectionInfo",
-    "WebSocketMiddleware",
 ]

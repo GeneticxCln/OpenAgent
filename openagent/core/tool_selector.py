@@ -140,6 +140,19 @@ User request: "{user_request}"{context_str}
 Respond with only the category name (e.g., "system_info").
 """
         
+        # Quick heuristic before calling LLM
+        ur = (user_request or "").lower()
+        if any(k in ur for k in ["cpu", "memory", "process", "disk", "system info", "uptime"]):
+            return ToolIntent.SYSTEM_INFO
+        if any(k in ur for k in ["list files", "read file", "write file", "directory", "path", "file", "open", "save"]):
+            return ToolIntent.FILE_OPERATIONS
+        if any(k in ur for k in ["git ", "commit", "branch", "merge", "status", "diff", "log"]):
+            return ToolIntent.GIT_OPERATIONS
+        if any(k in ur for k in ["search", "grep", "find pattern", "scan code"]):
+            return ToolIntent.CODE_SEARCH
+        if any(k in ur for k in ["run", "execute", "command", "shell", "bash", "sh"]):
+            return ToolIntent.COMMAND_EXECUTION
+        
         try:
             if self.llm:
                 response = await self.llm.generate_response(prompt, system_prompt="Intent Classifier")
@@ -200,19 +213,31 @@ Rules:
         
         try:
             if self.llm:
-                response = await self.llm.generate_response(prompt, system_prompt="Tool Planner")
+                plan_data: Optional[Dict[str, Any]] = None
+                # Prefer a structured JSON generation method if available
+                generate_json = getattr(self.llm, "generate_json", None)
+                if callable(generate_json):
+                    plan_data = await generate_json({
+                        "prompt": prompt,
+                        "schema_hint": "tool_plan_v1"
+                    })
+                    # Some implementations may wrap under a key
+                    if isinstance(plan_data, dict) and "plan" in plan_data and not plan_data.get("calls"):
+                        plan_data = plan_data["plan"]
+                else:
+                    response = await self.llm.generate_response(prompt, system_prompt="Tool Planner")
+                    # Extract JSON from response
+                    start = response.find('{')
+                    end = response.rfind('}')
+                    if start != -1 and end != -1:
+                        plan_data = json.loads(response[start:end+1])
                 
-                # Extract JSON from response
-                start = response.find('{')
-                end = response.rfind('}')
-                if start != -1 and end != -1:
-                    plan_data = json.loads(response[start:end+1])
-                    
+                if isinstance(plan_data, dict):
                     # Convert to ToolPlan
                     tool_calls = []
                     for i, call_data in enumerate(plan_data.get('calls', [])):
                         tool_call = ToolCall(
-                            tool_name=call_data.get('tool_name', ''),
+                            tool_name=call_data.get('tool_name') or call_data.get('tool', ''),
                             parameters=call_data.get('parameters', {}),
                             intent=intent,
                             rationale=call_data.get('rationale', ''),
@@ -248,6 +273,38 @@ Rules:
             )
         
         elif intent == ToolIntent.GIT_OPERATIONS and "git_tool" in self.available_tools:
+            # If the request hints at problems, produce a troubleshooting sequence
+            t = (user_request or "").lower()
+            calls: List[ToolCall] = []
+            if any(k in t for k in ["conflict", "broken", "issue", "problem", "fail", "merge"]):
+                # status -> log -> optional diff
+                calls.append(ToolCall(
+                    tool_name="git_tool",
+                    parameters={"subcommand": "status"},
+                    intent=intent,
+                    rationale="Check repository status"
+                ))
+                calls.append(ToolCall(
+                    tool_name="git_tool",
+                    parameters={"subcommand": "log", "args": ["-n", "5", "--oneline"]},
+                    intent=intent,
+                    rationale="Show recent commits",
+                    order=2
+                ))
+                if "conflict" in t or "merge" in t:
+                    calls.append(ToolCall(
+                        tool_name="git_tool",
+                        parameters={"subcommand": "diff"},
+                        intent=intent,
+                        rationale="Inspect conflicting changes",
+                        order=3
+                    ))
+                return ToolPlan(
+                    calls=calls,
+                    explanation="Git troubleshooting steps",
+                    estimated_risk="low"
+                )
+            # Default single status
             return ToolPlan(
                 calls=[ToolCall(
                     tool_name="git_tool",
@@ -273,6 +330,169 @@ Rules:
                 )],
                 explanation=f"Search repository for '{pattern}'",
                 estimated_risk="low"
+            )
+        
+        # If we can infer multiple actions from the request, create a basic multi-step plan
+        calls: List[ToolCall] = []
+        order = 1
+        text = (user_request or "").lower()
+        
+        # Heuristic: disk usage check
+        if any(k in text for k in ["disk usage", "disk space", "df -h", "free space","check disk"]):
+            calls.append(ToolCall(
+                tool_name="command_executor",
+                parameters={"command": "df -h", "explain_only": True},
+                intent=ToolIntent.COMMAND_EXECUTION,
+                rationale="Check disk usage",
+                order=order,
+            ))
+            order += 1
+        
+        # Heuristic: list directory
+        if any(k in text for k in ["list", "ls", "show files", "list files", "directory listing"]):
+            # Try to extract a path (very simple heuristic)
+            path = "."
+            for token in text.split():
+                if token.startswith("/") or token.startswith("./"):
+                    path = token
+                    break
+            calls.append(ToolCall(
+                tool_name="file_manager",
+                parameters={"operation": "list", "path": path},
+                intent=ToolIntent.FILE_OPERATIONS,
+                rationale=f"List directory {path}",
+                order=order,
+            ))
+            order += 1
+        
+        # Heuristic: system overview
+        if any(k in text for k in ["system info", "system information", "overview", "cpu", "memory"]):
+            calls.append(ToolCall(
+                tool_name="system_info",
+                parameters={"info_type": "overview"},
+                intent=ToolIntent.SYSTEM_INFO,
+                rationale="Get system overview",
+                order=order,
+            ))
+            order += 1
+        
+        # Heuristic: simple code/text search
+        if any(k in text for k in ["search", "find pattern", "grep"]):
+            # Extract a simple pattern (last word after 'search' or quoted string)
+            pattern = None
+            import re as _re
+            m = _re.search(r'"([^"]+)"', user_request or "")
+            if m:
+                pattern = m.group(1)
+            else:
+                m2 = _re.search(r'search\s+for\s+([\w\-\.\_/]+)', text)
+                if m2:
+                    pattern = m2.group(1)
+            if not pattern:
+                # fallback to last word
+                words = text.split()
+                pattern = words[-1] if words else "TODO"
+            calls.append(ToolCall(
+                tool_name="repo_grep",
+                parameters={"pattern": pattern, "path": "."},
+                intent=ToolIntent.CODE_SEARCH,
+                rationale=f"Search repository for '{pattern}'",
+                order=order,
+            ))
+            order += 1
+
+        # Heuristic: network diagnostics
+        if any(k in text for k in ["network", "connectivity", "ping", "latency", "port", "listening", "connection issue", "socket"]):
+            # Prefer a safe explain-only diagnostic sequence
+            # 1) Check listening ports
+            calls.append(ToolCall(
+                tool_name="command_executor",
+                parameters={"command": "ss -tulpn", "explain_only": True},
+                intent=ToolIntent.COMMAND_EXECUTION,
+                rationale="Inspect listening ports and sockets",
+                order=order,
+            ))
+            order += 1
+            # 2) Ping a reliable target
+            calls.append(ToolCall(
+                tool_name="command_executor",
+                parameters={"command": "ping -c 3 8.8.8.8", "explain_only": True},
+                intent=ToolIntent.COMMAND_EXECUTION,
+                rationale="Ping external host to test connectivity",
+                order=order,
+            ))
+            order += 1
+
+        # Heuristic: package/dependency overview
+        if any(k in text for k in ["python packages", "pip", "dependencies", "packages", "node modules", "npm"]):
+            if "npm" in text or "node" in text:
+                pkg_cmd = "npm list --depth=0"
+            else:
+                pkg_cmd = "pip list"
+            calls.append(ToolCall(
+                tool_name="command_executor",
+                parameters={"command": pkg_cmd, "explain_only": True},
+                intent=ToolIntent.COMMAND_EXECUTION,
+                rationale="List installed packages",
+                order=order,
+            ))
+            order += 1
+
+        # Heuristic: git troubleshooting flow
+        if ("git" in text) and any(k in text for k in ["conflict", "broken", "issue", "problem", "fail", "merge"]):
+            calls.append(ToolCall(
+                tool_name="git_tool",
+                parameters={"subcommand": "status"},
+                intent=ToolIntent.GIT_OPERATIONS,
+                rationale="Check repository status",
+                order=order,
+            ))
+            order += 1
+            # Follow with recent commits or diff
+            calls.append(ToolCall(
+                tool_name="git_tool",
+                parameters={"subcommand": "log", "args": ["-n", "5", "--oneline"]},
+                intent=ToolIntent.GIT_OPERATIONS,
+                rationale="Show recent commits",
+                order=order,
+            ))
+            order += 1
+            # If conflicts are mentioned, show diff
+            if "conflict" in text or "merge" in text:
+                calls.append(ToolCall(
+                    tool_name="git_tool",
+                    parameters={"subcommand": "diff"},
+                    intent=ToolIntent.GIT_OPERATIONS,
+                    rationale="Inspect conflicting changes",
+                    order=order,
+                ))
+                order += 1
+
+        # Heuristic: simple recovery step when errors mentioned
+        if any(k in text for k in ["error", "failed", "fails", "timeout"]):
+            # Add a grep step to search codebase/logs for the error keyword
+            key = None
+            import re as _re2
+            merr = _re2.search(r'error\s*[:\-]?\s*([\w\-\.\_/]+)', text)
+            if merr:
+                key = merr.group(1)
+            if not key:
+                key = "error"
+            calls.append(ToolCall(
+                tool_name="repo_grep",
+                parameters={"pattern": key, "path": "."},
+                intent=ToolIntent.CODE_SEARCH,
+                rationale=f"Search repository for error keyword '{key}'",
+                order=order,
+            ))
+            order += 1
+        
+        if calls:
+            return ToolPlan(
+                calls=calls,
+                explanation="Multi-step plan based on request heuristics",
+                estimated_risk="low",
+                requires_confirmation=False,
             )
         
         # Default fallback
