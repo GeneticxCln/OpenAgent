@@ -1006,9 +1006,14 @@ def analyze(
 def validate(
     command: str = typer.Argument(..., help="Shell command to validate"),
     quiet: bool = typer.Option(False, help="Print only the decision (allow/warn/block)"),
+    quiet_with_reason: bool = typer.Option(False, help="Print 'decision|reason' on a single line for shell integration"),
 ):
     """Validate a command against OpenAgent's policy (allow/warn/block)."""
     decision, reason = validate_cmd(command)
+    if quiet_with_reason:
+        # One-line machine-friendly output for shell integration
+        console.print(f"{decision}|{reason}")
+        return
     if quiet:
         console.print(decision)
     else:
