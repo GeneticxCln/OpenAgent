@@ -10,7 +10,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,17 @@ from openagent.server.models import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Observability
+from openagent.core.observability import (
+    configure_observability,
+    get_logger,
+    get_metrics_collector,
+    get_request_tracker,
+)
+obs_logger = get_logger(__name__)
+metrics = get_metrics_collector()
+tracker = get_request_tracker()
+
 # Global instances
 auth_manager = AuthManager()
 rate_limiter = RateLimiter()
@@ -50,11 +61,17 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting OpenAgent server...")
     
-    # Initialize default agent
+    # Initialize default agent (prefer Gemini if key present)
+    import os
+    def _default_model():
+        if os.getenv("GEMINI_API_KEY"):
+            return "gemini-1.5-flash"
+        return os.getenv("DEFAULT_MODEL", "tiny-llama")
+
     default_agent = Agent(
         name="WebAgent",
         description="OpenAgent web interface assistant",
-        model_name="tiny-llama",
+        model_name=_default_model(),
         tools=[CommandExecutor(), FileManager(), SystemInfo()]
     )
     agents["default"] = default_agent
@@ -76,7 +93,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenAgent API",
     description="REST API for OpenAgent - AI-powered terminal assistant",
-    version="0.1.0",
+    version="0.1.1",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -95,6 +112,42 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["localhost", "127.0.0.1", "*.localhost"]
 )
+
+# Request ID and metrics middleware
+from fastapi.responses import Response, PlainTextResponse
+import uuid as _uuid
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    # Configure observability on first request if needed
+    configure_observability()
+
+    request_id = request.headers.get("X-Request-ID") or str(_uuid.uuid4())
+    path = request.scope.get("path", request.url.path)
+    method = request.method
+    start = time.time()
+
+    # Set context for logs
+    tracker.start_request(request_id=request_id)
+    obs_logger.set_context(request_id=request_id)
+
+    try:
+        response: Response = await call_next(request)
+        status = response.status_code
+    except Exception as e:
+        status = 500
+        obs_logger.error("Unhandled exception during request", error=e, metadata={"path": path, "method": method})
+        raise
+    finally:
+        duration = time.time() - start
+        metrics.record_request(method, path, status, duration)
+        # Clear context
+        tracker.end_request()
+        obs_logger.clear_context()
+
+    # Add request id header
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 # WebSocket support
 from fastapi import WebSocket, WebSocketDisconnect
@@ -183,7 +236,7 @@ async def agent_error_handler(request: Request, exc: AgentError):
         content=ErrorResponse(
             error="agent_error",
             message=str(exc),
-            timestamp=datetime.utcnow().isoformat()
+timestamp=datetime.now(timezone.utc).isoformat()
         ).dict()
     )
 
@@ -196,21 +249,54 @@ async def tool_error_handler(request: Request, exc: ToolError):
         content=ErrorResponse(
             error="tool_error", 
             message=str(exc),
-            timestamp=datetime.utcnow().isoformat()
+timestamp=datetime.now(timezone.utc).isoformat()
         ).dict()
     )
 
 
-# Health check endpoint
+# Health check endpoints
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
+    """Health check endpoint (deprecated; use /healthz)."""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "0.1.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.1",
         "agents": len(agents)
     }
+
+@app.get("/healthz")
+async def healthz():
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.1",
+        "agents": len(agents)
+    }
+
+@app.get("/readyz")
+async def readyz():
+    # Simple readiness: default agent exists
+    ready = "default" in agents
+    return {
+        "status": "ok" if ready else "starting",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.1",
+        "agents": len(agents)
+    }
+
+# Metrics endpoint
+@app.get("/metrics")
+async def metrics_endpoint():
+    data = metrics.get_metrics()
+    # Use Prometheus content type if available
+    content_type = "text/plain; version=0.0.4; charset=utf-8"
+    try:
+        from prometheus_client import CONTENT_TYPE_LATEST as _CTL
+        content_type = _CTL
+    except Exception:
+        pass
+    return Response(content=data, media_type=content_type)
 
 
 # Authentication endpoints
