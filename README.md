@@ -11,7 +11,7 @@ A powerful, production-ready AI agent framework powered by Hugging Face models, 
 - **🛠️ Advanced Tools** - System monitoring, file management, command execution
 - **🎨 Rich CLI Interface** - Beautiful terminal interface with syntax highlighting
 - **🔒 Security First** - Safe command execution with built-in security checks
-- **📱 Multiple Interfaces** - CLI chat and single commands; API server and WebSocket streaming (alpha)
+- **📱 Multiple Interfaces** - CLI chat and single commands; API server and WebSocket streaming (alpha). See docs/API_STABILITY.md for endpoint contracts.
 
 ## 🏁 Quick Start
 
