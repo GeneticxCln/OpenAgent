@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class MessageType(Enum):
@@ -92,17 +92,17 @@ class WebSocketMessage(BaseModel):
     is_stream_start: bool = Field(False, description="Start of a streamed response")
     is_stream_end: bool = Field(False, description="End of a streamed response")
     
-    class Config:
-        use_enum_values = True
+    # Pydantic v2 config
+    model_config = ConfigDict(use_enum_values=True)
     
     def to_json(self) -> str:
         """Convert message to JSON string."""
-        return self.json()
+        return self.model_dump_json()
     
     @classmethod
     def from_json(cls, json_str: str) -> "WebSocketMessage":
         """Create message from JSON string."""
-        return cls.parse_raw(json_str)
+        return cls.model_validate_json(json_str)
     
     @classmethod
     def create_response(

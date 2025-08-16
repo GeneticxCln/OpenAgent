@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.3 - 2025-08-16
+
+Added
+- Unit tests for CLI helpers constructing WS URLs and HTTP headers.
+- Release notes for 0.1.3.
+
+Changed
+- WebSocket models migrated to Pydantic v2 APIs to eliminate deprecation warnings.
+- README streaming/auth section polished.
+
+Fixed
+- Syntax error in legacy /ws endpoint; inlined streaming logic and ensured consistent start/end events.
+
 ## 0.1.2 - 2025-08-16
 
 Added

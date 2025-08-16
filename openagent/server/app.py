@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenAgent API",
     description="REST API for OpenAgent - AI-powered terminal assistant",
-    version="0.1.1",
+    version="0.1.3",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -217,6 +217,45 @@ async def websocket_endpoint(ws: WebSocket):
     try:
         while True:
             raw_text = await ws.receive_text()
+            # If payload looks like a simple chat request, stream tokens directly
+            try:
+                payload = json.loads(raw_text)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and 'message' in payload and ('agent' not in payload or payload.get('agent') in agents):
+                agent_name = payload.get('agent') or 'default'
+                if agent_name not in agents:
+                    await ws.send_text(json.dumps({"type": "error", "error": f"Agent '{agent_name}' not found"}))
+                    continue
+                # Start event (optional)
+                await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+                # Implement inline streaming using shared generator
+                async def _stream_tokens_sse(agent_obj, message: str):
+                    llm = getattr(agent_obj, 'llm', None)
+                    try:
+                        if hasattr(agent_obj, 'stream_message') and callable(getattr(agent_obj, 'stream_message')):
+                            async for token in agent_obj.stream_message(message):
+                                yield token
+                            return
+                    except Exception:
+                        pass
+                    try:
+                        if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+                            async for token in llm.stream_generate(message):
+                                yield token
+                            return
+                    except Exception:
+                        pass
+                    resp = await agent_obj.process_message(message)
+                    content = resp.content if hasattr(resp, 'content') else str(resp)
+                    for word in content.split(' '):
+                        yield word + ' '
+                        await asyncio.sleep(0)
+                async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
+                    await ws.send_text(json.dumps({"content": chunk}))
+                await ws.send_text(json.dumps({"event": "end"}))
+                continue
+            # Otherwise, delegate to generic handler for backward-compatible protocols
             await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
     except WebSocketDisconnect:
         pass
@@ -272,6 +311,43 @@ async def websocket_chat(ws: WebSocket):
     try:
         while True:
             raw_text = await ws.receive_text()
+            # Shortcut: simple chat payload streams tokens directly
+            try:
+                payload = json.loads(raw_text)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and 'message' in payload and ('agent' not in payload or payload.get('agent') in agents):
+                agent_name = payload.get('agent') or 'default'
+                if agent_name not in agents:
+                    await ws.send_text(json.dumps({"type": "error", "error": f"Agent '{agent_name}' not found"}))
+                    continue
+                await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+                # Inline streaming similar to SSE path
+                async def _stream_tokens_sse(agent_obj, message: str):
+                    llm = getattr(agent_obj, 'llm', None)
+                    try:
+                        if hasattr(agent_obj, 'stream_message') and callable(getattr(agent_obj, 'stream_message')):
+                            async for token in agent_obj.stream_message(message):
+                                yield token
+                            return
+                    except Exception:
+                        pass
+                    try:
+                        if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+                            async for token in llm.stream_generate(message):
+                                yield token
+                            return
+                    except Exception:
+                        pass
+                    resp = await agent_obj.process_message(message)
+                    content = resp.content if hasattr(resp, 'content') else str(resp)
+                    for word in content.split(' '):
+                        yield word + ' '
+                        await asyncio.sleep(0)
+                async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
+                    await ws.send_text(json.dumps({"content": chunk}))
+                await ws.send_text(json.dumps({"event": "end"}))
+                continue
             await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
     except WebSocketDisconnect:
         pass
@@ -355,7 +431,7 @@ async def health_check():
     return {
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "0.1.1",
+        "version": "0.1.3",
         "agents": len(agents)
     }
 
@@ -474,9 +550,8 @@ async def chat_stream(
     _rate_limit: None = Depends(check_rate_limit)
 ):
     """Stream a chat response using Server-Sent Events (SSE).
-    Note: This is an alpha streaming endpoint that simulates token streaming
-    by chunking the final response. Replace with true token streaming when
-    underlying LLM supports incremental generation.
+    Attempts real incremental streaming if supported by the model, otherwise
+    falls back to chunking the final response.
     """
     agent_name = request.agent or "default"
     if agent_name not in agents:
@@ -484,23 +559,38 @@ async def chat_stream(
 
     agent = agents[agent_name]
 
+    async def _stream_tokens(message: str):
+        # Try agent/LLM-native streaming if available
+        llm = getattr(agent, 'llm', None)
+        try:
+            if hasattr(agent, 'stream_message') and callable(getattr(agent, 'stream_message')):
+                async for token in agent.stream_message(message):
+                    yield token
+                return
+        except Exception:
+            pass
+        try:
+            if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+                async for token in llm.stream_generate(message):
+                    yield token
+                return
+        except Exception:
+            pass
+        # Fallback: generate full, then chunk
+        resp = await agent.process_message(message)
+        content = resp.content if hasattr(resp, 'content') else str(resp)
+        for word in content.split(' '):
+            yield word + ' '
+            await asyncio.sleep(0)
+
     async def event_generator():
         try:
-            # Generate full response first
-            resp = await agent.process_message(request.message)
-            content = resp.content if hasattr(resp, "content") else str(resp)
-            # Simple word-based chunking
-            words = content.split(" ")
-            buf = []
             # Send a start event
             yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
-            for i, w in enumerate(words, 1):
-                buf.append(w)
-                if len(buf) >= 20 or i == len(words):
-                    part = " ".join(buf)
-                    buf = []
-                    yield f"data: {json.dumps({'content': part})}\n\n"
-                    await asyncio.sleep(0.01)
+            async for chunk in _stream_tokens(request.message):
+                if not chunk:
+                    continue
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
             # End event
             yield "event: end\ndata: {}\n\n"
         except Exception as e:

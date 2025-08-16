@@ -10,7 +10,7 @@ from openagent.core.base import BaseAgent, BaseTool
 from openagent.core.config import Config
 from openagent.core.exceptions import OpenAgentError, ToolError, AgentError
 
-__version__ = "0.1.0"
+__version__ = "0.1.3"
 __author__ = "Your Name"
 __email__ = "your.email@example.com"
 __description__ = "A modern, extensible AI agent framework"

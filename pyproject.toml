@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openagent"
-version = "0.1.2"
+version = "0.1.3"
 description = "A modern, extensible AI agent framework for building intelligent applications"
 readme = "README.md"
 license = {text = "MIT"}

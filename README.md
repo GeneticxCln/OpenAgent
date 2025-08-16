@@ -103,7 +103,7 @@ Examples:
 
 Notes:
 - If --ws is set and WebSocket connection fails (or the websockets package is not installed), the CLI automatically falls back to SSE; if SSE fails, it falls back to non-streaming.
-- For WS, the URL is derived from the API base: http(s) - ws(s), host preserved, path from --ws-path (default /ws/chat). Authorization header and/or token query param can be sent.
+- For WS, the URL is derived from the API base: http(s) -> ws(s), host preserved, path from --ws-path (default /ws/chat). Authorization header and/or token query param can be sent.
 - For SSE and non-streaming HTTP, the Authorization header is included when an API token is provided.
 
 Example clients:
