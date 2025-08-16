@@ -70,17 +70,26 @@ async def lifespan(app: FastAPI):
     # Initialize default agent (prefer Gemini if key present)
     import os
     def _default_model():
-        # Prefer local lightweight model during tests or when GEMINI_API_KEY is missing
+        # Prefer Ollama local model if available, else Gemini if key present, else tiny-llama
         dm = os.getenv("DEFAULT_MODEL")
         if os.getenv("PYTEST_CURRENT_TEST"):
-            # During tests always use a local lightweight model to avoid external deps
             return "tiny-llama"
+        # Check explicit default first
+        if dm:
+            return dm
+        # Try Ollama auto-pick
+        try:
+            import asyncio as _asyncio
+            from openagent.core.llm_ollama import get_default_ollama_model
+            m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
+            if m:
+                return f"ollama:{m}"
+        except Exception:
+            pass
+        # Try Gemini
         if os.getenv("GEMINI_API_KEY"):
-            return dm or "gemini-1.5-flash"
-        # If default model is gemini-* but no API key, fallback to tiny-llama
-        if dm and dm.startswith("gemini-"):
-            return "tiny-llama"
-        return dm or "tiny-llama"
+            return "gemini-1.5-flash"
+        return "tiny-llama"
 
     default_agent = Agent(
         name="WebAgent",

@@ -660,9 +660,19 @@ def get_llm(model_name: str = "codellama-7b", **kwargs):
     if model_name and model_name.startswith("gemini-"):
         from .llm_gemini import GeminiLLM
         return GeminiLLM(model_name=model_name, **kwargs)
-    if model_name and model_name.startswith("ollama:"):
-        from .llm_ollama import OllamaLLM
-        base = model_name.split(":", 1)[1] or "llama3"
+    if model_name and (model_name == "ollama" or model_name.startswith("ollama:")):
+        from .llm_ollama import OllamaLLM, get_default_ollama_model
+        # Resolve base tag
+        base = None
+        if model_name == "ollama":
+            # Try to auto-pick first installed model
+            try:
+                base = asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
+            except Exception:
+                base = None
+        else:
+            base = model_name.split(":", 1)[1] or None
+        base = base or "llama3"
         return OllamaLLM(model_name=base, **kwargs)
     # Default HF path
     if llm is None or getattr(llm, "model_name", None) != model_name:

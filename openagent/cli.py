@@ -247,6 +247,7 @@ def chat(
     api_url: Optional[str] = typer.Option(None, help="API server base URL (e.g., http://localhost:8000). If provided or OPENAGENT_API_URL is set, use server with streaming."),
     no_stream: bool = typer.Option(False, help="Disable streaming even if server is used"),
     ws: bool = typer.Option(False, help="Use WebSocket streaming when using API server (falls back to SSE if unavailable)"),
+    auto_serve: bool = typer.Option(True, "--auto-serve/--no-auto-serve", help="Auto-start local API server if none provided"),
     ws_path: str = typer.Option("/ws/chat", help="WebSocket path on the server (used when --ws is set)"),
     api_token: Optional[str] = typer.Option(None, help="API token for Authorization header. If not provided, uses OPENAGENT_API_TOKEN or OPENAGENT_API_KEY env vars."),
     auth_scheme: str = typer.Option("Bearer", help="Auth scheme prefix for token (e.g., Bearer). Use empty string to send raw token."),
@@ -281,6 +282,46 @@ def chat(
         console.print(f"\n[dim]Using API server: {api_url}[/dim]")
         
         # Resolve API token from args or environment
+        resolved_token = api_token or os.getenv("OPENAGENT_API_TOKEN") or os.getenv("OPENAGENT_API_KEY")
+        if resolved_token:
+            auth_header_value = f"{auth_scheme} {resolved_token}".strip() if auth_scheme else resolved_token
+    elif auto_serve:
+        # Auto-start local server on a free port
+        import socket, subprocess, time
+        def _free_port():
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            p = s.getsockname()[1]
+            s.close()
+            return p
+        port = _free_port()
+        base = f"http://127.0.0.1:{port}"
+        console.print(f"\n[dim]Starting local API server at {base}...[/dim]")
+        proc = subprocess.Popen([
+            sys.executable, "-m", "uvicorn", "openagent.server.app:app", "--host", "127.0.0.1", "--port", str(port), "--log-level", "warning"
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Best-effort wait for readiness
+        import httpx as _hx
+        ok = False
+        for _ in range(30):
+            try:
+                with _hx.Client(timeout=0.3) as client:
+                    r = client.get(f"{base}/healthz")
+                    if r.status_code == 200:
+                        ok = True
+                        break
+            except Exception:
+                pass
+            time.sleep(0.2)
+        if not ok:
+            console.print("[yellow]Server did not become ready in time; continuing without server[/yellow]")
+        else:
+            api_url = base
+            use_server = True
+            console.print(f"[dim]Local server ready: {api_url}[/dim]")
+            os.environ["OPENAGENT_API_URL"] = api_url
+        
+        # Resolve API token from args or environment (none by default for local)
         resolved_token = api_token or os.getenv("OPENAGENT_API_TOKEN") or os.getenv("OPENAGENT_API_KEY")
         if resolved_token:
             auth_header_value = f"{auth_scheme} {resolved_token}".strip() if auth_scheme else resolved_token

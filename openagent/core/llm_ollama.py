@@ -15,6 +15,25 @@ from typing import Any, AsyncIterator, Dict, Optional
 import httpx
 
 
+async def get_default_ollama_model(host: Optional[str] = None) -> Optional[str]:
+    """Return the first installed Ollama model tag (e.g., 'llama3') or None.
+    Uses /api/tags.
+    """
+    base = host or os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            r.raise_for_status()
+            data = r.json() or {}
+            models = data.get("models") or []
+            if not models:
+                return None
+            # names may include ':latest' suffix; strip tag
+            name = models[0].get("name", "")
+            return name.split(":", 1)[0] if name else None
+    except Exception:
+        return None
+
 class OllamaLLM:
     """Ollama LLM provider using the local Ollama server.
 
