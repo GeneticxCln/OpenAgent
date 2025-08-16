@@ -62,6 +62,10 @@ async def lifespan(app: FastAPI):
     """Manage application lifespan events."""
     # Startup
     logger.info("Starting OpenAgent server...")
+    try:
+        obs_logger.info("Server starting", metadata={"event": "startup"})
+    except Exception:
+        pass
     
     # Initialize default agent (prefer Gemini if key present)
     import os
@@ -87,16 +91,28 @@ async def lifespan(app: FastAPI):
     agents["default"] = default_agent
     
     logger.info("OpenAgent server started successfully")
+    try:
+        obs_logger.info("Server started", metadata={"event": "startup_complete"})
+    except Exception:
+        pass
     
     yield
     
     # Shutdown
     logger.info("Shutting down OpenAgent server...")
+    try:
+        obs_logger.info("Server shutting down", metadata={"event": "shutdown"})
+    except Exception:
+        pass
     for agent in agents.values():
         if hasattr(agent, 'llm') and agent.llm:
             await agent.llm.unload_model()
     agents.clear()
     logger.info("OpenAgent server shut down")
+    try:
+        obs_logger.info("Server shut down", metadata={"event": "shutdown_complete"})
+    except Exception:
+        pass
 
 
 # Create FastAPI app
@@ -227,9 +243,18 @@ async def get_current_user(
         if not user_id:
             return None
         user = auth_manager.get_user_by_id(user_id)
+        try:
+            if user:
+                obs_logger.set_context(user_id=user.id)
+        except Exception:
+            pass
         return user
     except Exception as e:
         logger.warning(f"Authentication failed: {e}")
+        try:
+            obs_logger.warning("Authentication failed", metadata={"error": str(e)})
+        except Exception:
+            pass
         return None
 
 
@@ -355,6 +380,11 @@ async def chat(
         
         # Log usage
         if user:
+            try:
+                obs_logger.set_context(user_id=user.id)
+                obs_logger.info("Chat handled", metadata={"agent": agent_name, "processing_time": processing_time})
+            except Exception:
+                pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
@@ -371,6 +401,10 @@ async def chat(
         
     except Exception as e:
         logger.error(f"Chat error: {e}")
+        try:
+            obs_logger.error("Chat error", error=e, metadata={"agent": agent_name})
+        except Exception:
+            pass
         raise HTTPException(
             status_code=500,
             detail=f"Error processing message: {str(e)}"
@@ -449,6 +483,11 @@ async def generate_code(
         
         # Log usage
         if user:
+            try:
+                obs_logger.set_context(user_id=user.id)
+                obs_logger.info("Code generated", metadata={"language": request.language, "processing_time": processing_time})
+            except Exception:
+                pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
@@ -465,6 +504,10 @@ async def generate_code(
         
     except Exception as e:
         logger.error(f"Code generation error: {e}")
+        try:
+            obs_logger.error("Code generation error", error=e, metadata={"language": request.language})
+        except Exception:
+            pass
         raise HTTPException(
             status_code=500,
             detail=f"Error generating code: {str(e)}"
@@ -499,6 +542,11 @@ async def analyze_code(
         
         # Log usage
         if user:
+            try:
+                obs_logger.set_context(user_id=user.id)
+                obs_logger.info("Code analyzed", metadata={"language": request.language, "processing_time": processing_time})
+            except Exception:
+                pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
@@ -514,6 +562,10 @@ async def analyze_code(
         
     except Exception as e:
         logger.error(f"Code analysis error: {e}")
+        try:
+            obs_logger.error("Code analysis error", error=e, metadata={"language": request.language})
+        except Exception:
+            pass
         raise HTTPException(
             status_code=500,
             detail=f"Error analyzing code: {str(e)}"
@@ -564,6 +616,10 @@ async def get_system_info(
         
     except Exception as e:
         logger.error(f"System info error: {e}")
+        try:
+            obs_logger.error("System info error", error=e)
+        except Exception:
+            pass
         raise HTTPException(
             status_code=500,
             detail=f"Error getting system info: {str(e)}"
@@ -683,6 +739,11 @@ async def list_models(
 async def log_usage(user_id: str, operation: str, metadata: Dict[str, Any]):
     """Log API usage for analytics."""
     # In a real implementation, this would write to a database
+    try:
+        obs_logger.set_context(user_id=user_id)
+        obs_logger.info("Usage", metadata={"operation": operation, **(metadata or {})})
+    except Exception:
+        pass
     logger.info(f"Usage: user={user_id}, operation={operation}, metadata={metadata}")
 
 
