@@ -3,7 +3,7 @@ VENV_DIR := venv
 PY := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
 
-.PHONY: dev venv editable shell-integration policy path help
+.PHONY: dev venv editable shell-integration policy path help test lint fmt type openapi export-openapi
 
 help:
 	@echo "Available targets:"
@@ -13,6 +13,12 @@ help:
 	@echo "  make shell-integration  # Apply zsh shell integration snippet"
 	@echo "  make policy             # Enable block_risky policy"
 	@echo "  make path               # Add venv/bin to PATH in ~/.zshrc if missing"
+	@echo "  make test               # Run tests"
+	@echo "  make lint               # Run flake8"
+	@echo "  make fmt                # Run black and isort"
+	@echo "  make type               # Run mypy"
+	@echo "  make openapi            # Export OpenAPI schema to openapi.json"
+	@echo "  make export-openapi     # Export OpenAPI schema (OUT=/tmp/openapi.json PORT=8050)"
 
 ## Full development setup
 dev: venv editable shell-integration policy path
@@ -46,4 +52,28 @@ policy:
 ## Add venv/bin to PATH in ~/.zshrc if missing
 path:
 	@bash -lc 'grep -q "^export PATH=\"$${HOME}/OpenAgent/venv/bin:\$${PATH}\"$$" $$HOME/.zshrc || echo "export PATH=\"$${HOME}/OpenAgent/venv/bin:\$${PATH}\"" >> $$HOME/.zshrc; echo "PATH updated in ~/.zshrc"'
+
+## Developer shortcuts
+TEST_ARGS ?=
+
+test:
+	pytest -q $(TEST_ARGS)
+
+lint:
+	flake8 openagent tests
+
+fmt:
+	black openagent tests
+	isort openagent tests
+
+type:
+	mypy openagent
+
+PORT ?= 8042
+OUT ?= openapi.json
+
+openapi:
+	./scripts/export_openapi.sh $(PORT) $(OUT)
+
+export-openapi: openapi
 
