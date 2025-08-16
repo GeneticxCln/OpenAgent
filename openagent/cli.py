@@ -26,6 +26,7 @@ from openagent.terminal.validator import validate as validate_cmd, load_policy, 
 from openagent.core.agent import Agent
 from openagent.core.llm import get_llm, ModelConfig
 from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
+from openagent.tools.git import GitTool, RepoGrep
 from openagent.core.config import Config
 from dotenv import load_dotenv
 import os
@@ -84,6 +85,14 @@ def create_agent(
     agent.add_tool(CommandExecutor(default_explain_only=not unsafe_exec))
     agent.add_tool(FileManager())
     agent.add_tool(SystemInfo())
+    agent.add_tool(GitTool())
+    agent.add_tool(RepoGrep())
+    
+    # Warm the model asynchronously (best-effort)
+    try:
+        asyncio.get_event_loop().create_task(agent.llm.load_model())
+    except Exception:
+        pass
     
     return agent
 
@@ -95,6 +104,8 @@ def chat(
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     debug: bool = typer.Option(False, help="Enable debug logging"),
     unsafe_exec: bool = typer.Option(True, "--unsafe-exec/--no-unsafe-exec", help="Allow actual command execution (default true). Use --no-unsafe-exec for explain-only mode."),
+    max_new_tokens: int = typer.Option(512, help="Maximum new tokens to generate"),
+    temperature: float = typer.Option(0.7, help="Sampling temperature"),
 ):
     """Start an interactive chat session with OpenAgent."""
     
@@ -114,6 +125,13 @@ def chat(
     
     console.print("\\n[dim]Initializing AI model... This may take a moment.[/dim]")
     
+    # Apply generation preferences
+    try:
+        agent.llm.generation_config.max_new_tokens = max_new_tokens
+        agent.llm.temperature = temperature
+    except Exception:
+        pass
+
     # Interactive chat loop
     asyncio.run(chat_loop())
 
@@ -258,6 +276,8 @@ def run(
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     output_format: str = typer.Option("text", help="Output format (text/json)"),
     unsafe_exec: bool = typer.Option(True, "--unsafe-exec/--no-unsafe-exec", help="Allow actual command execution (default true). Use --no-unsafe-exec for explain-only mode."),
+    max_new_tokens: int = typer.Option(512, help="Maximum new tokens to generate"),
+    temperature: float = typer.Option(0.7, help="Sampling temperature"),
 ):
     """Run a single prompt through OpenAgent and exit."""
     
@@ -270,6 +290,12 @@ def run(
     agent = create_agent(model, device, load_in_4bit, unsafe_exec)
     
     async def run_single():
+        # Inject generation preferences into agent's LLM
+        try:
+            agent.llm.generation_config.max_new_tokens = max_new_tokens
+            agent.llm.temperature = temperature
+        except Exception:
+            pass
         with console.status("[bold green]Processing...", spinner="dots") if output_format != "json" else contextlib.nullcontext():
             response = await agent.process_message(prompt)
         
@@ -561,6 +587,113 @@ def plugin_install(
         console.print(f"⚠️  [yellow]Plugin installation not yet implemented for: {source}[/yellow]")
         console.print("\n🔧 [dim]This feature is coming soon in v0.2.0![/dim]")
 
+
+# Execute shell commands with policy and safety
+@app.command("exec")
+def exec_cmd(
+    command: str = typer.Argument(..., help="Shell command to execute (quotes recommended)"),
+    model: str = typer.Option("tiny-llama", help="Model to use for explanations/logging"),
+    device: str = typer.Option("auto", help="Device for model (auto/cpu/cuda)"),
+    load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
+    dry_run: bool = typer.Option(False, help="Explain-only; do not execute"),
+):
+    """Execute a shell command with OpenAgent's safety policy."""
+    load_dotenv()
+    agent = create_agent(model, device, load_in_4bit, unsafe_exec=not dry_run)
+
+    async def do_exec():
+        tool = CommandExecutor(default_explain_only=dry_run)
+        with console.status("[bold green]Executing...", spinner="dots") if not dry_run else console.status("[bold green]Explaining...", spinner="dots"):
+            result = await tool.execute({"command": command, "explain_only": dry_run})
+        if result.success:
+            console.print(Panel(result.content or "", title=f"Command {'Explanation' if dry_run else 'Output'}", expand=True))
+        else:
+            console.print(Panel(f"Error: {result.error}", title="Execution Failed", style="red"))
+    asyncio.run(do_exec())
+
+# Plan-and-exec natural language task
+@app.command("do")
+def plan_and_exec(
+    task: str = typer.Argument(..., help="Describe what you want to do in natural language"),
+    model: str = typer.Option("tiny-llama", help="Model to use for planning"),
+    device: str = typer.Option("auto", help="Device for model"),
+    load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
+    auto_execute: bool = typer.Option(True, help="Automatically execute if allowed by policy"),
+):
+    """Plan a command, explain risks, validate via policy, then execute if allowed."""
+    load_dotenv()
+    agent = create_agent(model, device, load_in_4bit, unsafe_exec=auto_execute)
+
+    async def do_plan():
+        from openagent.core.context import gather_context
+        from openagent.core.tool_selector import SmartToolSelector
+        from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
+        from openagent.tools.git import GitTool, RepoGrep
+        from openagent.terminal.validator import validate as validate_cmd
+        
+        # Gather context for better planning
+        sysctx = gather_context()
+        ctx_block = sysctx.to_prompt_block()
+        
+        # Initialize selector with available tools
+        tools = {
+            "command_executor": CommandExecutor(default_explain_only=not auto_execute),
+            "file_manager": FileManager(),
+            "system_info": SystemInfo(),
+            "git_tool": GitTool(),
+            "repo_grep": RepoGrep(),
+        }
+        selector = SmartToolSelector(agent.llm, tools)
+        
+        # Create plan using LLM-driven tool selection
+        with console.status("[bold green]Planning...", spinner="dots"):
+            plan = await selector.create_tool_plan(task, context={"system": ctx_block})
+        
+        # Display plan summary
+        plan_table = Table(show_header=True, header_style="bold")
+        plan_table.add_column("Order", justify="right")
+        plan_table.add_column("Tool")
+        plan_table.add_column("Parameters")
+        plan_table.add_column("Rationale")
+        for call in sorted(plan.calls, key=lambda c: c.order):
+            plan_table.add_row(str(call.order), call.tool_name, str(call.parameters), call.rationale)
+        console.print(Panel(plan_table, title=f"Planned Steps (Risk: {plan.estimated_risk})"))
+        
+        # Special case: if the plan is a single command execution, validate via policy
+        if len(plan.calls) == 1 and plan.calls[0].tool_name.startswith("command_"):
+            cmd = plan.calls[0].parameters.get("command", "")
+            if cmd:
+                decision, reason = validate_cmd(cmd)
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("Field")
+                table.add_column("Value")
+                table.add_row("Command", cmd)
+                table.add_row("Decision", decision)
+                table.add_row("Policy Reason", reason)
+                table.add_row("Rationale", plan.calls[0].rationale or "")
+                console.print(Panel(table, title="Plan & Policy"))
+                if decision == "block":
+                    console.print("[red]Blocked by policy. Not executing.[/red]")
+                    return
+                if plan.requires_confirmation and auto_execute:
+                    console.print("[yellow]Confirmation required. Re-run with --auto-execute after review.[/yellow]")
+                    return
+        
+        if not auto_execute:
+            console.print("[yellow]Auto-exec disabled. Use --auto-execute to run.[/yellow]")
+            return
+        
+        # Execute plan
+        with console.status("[bold green]Executing...", spinner="dots"):
+            results = await selector.execute_plan(plan)
+        
+        # Render results
+        for i, res in enumerate(results, start=1):
+            title = f"Step {i} Output" if res.success else f"Step {i} Failed"
+            style = None if res.success else "red"
+            console.print(Panel(res.content or (res.error or ""), title=title, style=style))
+
+    asyncio.run(do_plan())
 
 @plugin_app.command("info")
 def plugin_info(

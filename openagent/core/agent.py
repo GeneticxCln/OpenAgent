@@ -168,40 +168,42 @@ class Agent(BaseAgent):
         code_keywords = ["code", "script", "function", "class", "command", "terminal", "bash", "python", "programming"]
         is_code_query = any(keyword in input_text.lower() for keyword in code_keywords)
         
-        # Create system prompt based on agent role and query type
-        if is_code_query:
-            system_prompt = f"""
-You are {self.name}, an expert programming and terminal assistant. You help users with:
-- Writing and debugging code
-- Explaining commands and scripts
-- Code optimization and best practices
-- Terminal operations and automation
-- Software development workflows
+        # Build context block for prompt injection (cwd, shell, OS, recent git)
+        try:
+            from openagent.core.context import gather_context
+            sysctx = gather_context()
+            ctx_block = sysctx.to_prompt_block()
+        except Exception:
+            ctx_block = None
 
-{self.description}
-
-Provide clear, accurate, and actionable responses. When providing code, include explanations.
-If asked about terminal commands, explain what they do and any potential risks.
-"""
-        else:
-            system_prompt = f"""
-You are {self.name}, an intelligent AI assistant. 
-
-{self.description}
-
-You help users with various tasks and questions. Provide helpful, accurate, and engaging responses.
-Be conversational but professional. If you're unsure about something, say so.
-"""
+        # Create system prompt based on agent role and query type, with context
+        base_system = (
+            f"You are {self.name}, an expert programming and terminal assistant.\n"
+            if is_code_query
+            else f"You are {self.name}, an intelligent AI assistant.\n"
+        )
+        guidance = (
+            "Provide clear, accurate, and actionable responses. When providing code, include explanations.\n"
+            "If asked about terminal commands, explain what they do and any potential risks.\n"
+            if is_code_query
+            else "Provide helpful, accurate, and engaging responses. Be concise and professional. If unsure, say so.\n"
+        )
+        system_prompt = base_system + (self.description or "") + "\n" + guidance
+        if ctx_block:
+            system_prompt += "\nContext:\n" + ctx_block
         
         # Check if we need to use tools
         tool_context = ""
+        planned_calls = None
         if self.tools and await self._should_use_tools(input_text):
-            tool_results = await self._execute_tools(input_text)
+            # Ask model to propose structured tool calls
+            planned_calls = await self._plan_tool_calls(input_text)
+            tool_results = await self._execute_tools(input_text, planned_calls)
             if tool_results:
                 tool_context = "\n\nTool Results:\n"
                 for tool_name, result in tool_results.items():
                     if result.success:
-                        tool_context += f"- {tool_name}: {result.content}\n"
+                        tool_context += f"- {tool_name}: {str(result.content)[:800]}\n"
                     else:
                         tool_context += f"- {tool_name}: Error - {result.error}\n"
         
@@ -236,18 +238,12 @@ Be conversational but professional. If you're unsure about something, say so.
         Returns:
             True if tools should be used
         """
-        # Simple keyword-based detection (replace with LLM analysis)
-        tool_keywords = {
-            "calculate", "compute", "math", "addition", "subtraction",
-            "search", "find", "look up", "web", "internet",
-            "weather", "temperature", "forecast",
-            "time", "date", "clock"
-        }
-        
+        # Prefer using LLM to decide if tools are needed for non-trivial tasks
         input_lower = input_text.lower()
-        return any(keyword in input_lower for keyword in tool_keywords)
+        heuristics = ["run", "execute", "search", "grep", "status", "log", "diff", "list files", "read file", "show system"]
+        return any(k in input_lower for k in heuristics)
     
-    async def _execute_tools(self, input_text: str) -> Dict[str, ToolResult]:
+    async def _execute_tools(self, input_text: str, planned_calls: Optional[List[Dict[str, Any]]] = None) -> Dict[str, ToolResult]:
         """
         Execute relevant tools based on input text.
         
@@ -257,32 +253,31 @@ Be conversational but professional. If you're unsure about something, say so.
         Returns:
             Dictionary mapping tool names to their results
         """
-        results = {}
-        
-        for tool in self.tools:
+        results: Dict[str, ToolResult] = {}
+        calls: List[Dict[str, Any]]
+        if planned_calls is not None:
+            calls = planned_calls
+        else:
+            # Fallback: naive selection over all tools
+            calls = [{"name": t.name, "args": input_text} for t in self.tools if await self._tool_is_relevant(t, input_text)]
+
+        for call in calls:
             try:
-                # Simple tool selection logic (replace with LLM-based selection)
-                if await self._tool_is_relevant(tool, input_text):
-                    logger.info(f"Executing tool: {tool.name}")
-                    
-                    # Execute the tool
-                    result = await tool.execute(input_text)
-                    results[tool.name] = result
-                    self._tools_used.append(tool.name)
-                    
-                    self.iteration_count += 1
-                    if self.iteration_count >= self.max_iterations:
-                        logger.warning(f"Maximum iterations ({self.max_iterations}) reached")
-                        break
-                        
+                tool = self.get_tool(call.get("name", ""))
+                if not tool:
+                    continue
+                logger.info(f"Executing tool: {tool.name}")
+                args = call.get("args", input_text)
+                result = await tool.execute(args)
+                results[tool.name] = result
+                self._tools_used.append(tool.name)
+                self.iteration_count += 1
+                if self.iteration_count >= self.max_iterations:
+                    logger.warning(f"Maximum iterations ({self.max_iterations}) reached")
+                    break
             except Exception as e:
-                logger.error(f"Error executing tool {tool.name}: {e}")
-                results[tool.name] = ToolResult(
-                    success=False,
-                    content="",
-                    error=str(e)
-                )
-        
+                logger.error(f"Error executing tool {call}: {e}")
+                results[call.get("name", "unknown")] = ToolResult(success=False, content="", error=str(e))
         return results
     
     def _tool_is_relevant_sync(self, tool: BaseTool, input_text: str) -> bool:
@@ -319,6 +314,40 @@ Be conversational but professional. If you're unsure about something, say so.
             True if tool is relevant
         """
         return self._tool_is_relevant_sync(tool, input_text)
+
+    async def _plan_tool_calls(self, input_text: str) -> Optional[List[Dict[str, Any]]]:
+        """Ask the model to propose structured tool calls in JSON.
+        Schema: {"tool_calls": [{"name": str, "args": object}]}
+        """
+        try:
+            tool_schemas = self.list_tools()
+            schema_text = str(tool_schemas)
+            prompt = (
+                "Given the user's request, choose zero or more tools from the following list and "
+                "return a JSON object with a 'tool_calls' array. Each item must include 'name' (one of the tool names) "
+                "and 'args' (object or string appropriate for that tool). If no tools are needed, return {\"tool_calls\": []}.\n\n"
+                f"Tools: {schema_text}\n\nRequest: {input_text}\nOnly return JSON."
+            )
+            raw = await self.llm.generate_response(prompt, system_prompt="Tool Planner")
+            import json
+            # Extract JSON if wrapped
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start == -1 or end == -1:
+                return None
+            obj = json.loads(raw[start:end+1])
+            calls = obj.get("tool_calls")
+            if isinstance(calls, list):
+                # keep only known tools
+                valid_names = {t.name for t in self.tools}
+                filtered: List[Dict[str, Any]] = []
+                for c in calls:
+                    if isinstance(c, dict) and c.get("name") in valid_names:
+                        filtered.append({"name": c["name"], "args": c.get("args")})
+                return filtered
+            return None
+        except Exception:
+            return None
     
     async def _generate_main_response(self, input_text: str, tool_results: List[str]) -> str:
         """
