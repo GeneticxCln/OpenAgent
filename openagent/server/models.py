@@ -36,6 +36,7 @@ class User(BaseModel):
     is_active: bool = True
     created_at: datetime
     last_login: Optional[datetime] = None
+    roles: List[str] = Field(default_factory=list, description="List of roles for RBAC (e.g., ['admin','user'])")
 
 
 class LoginRequest(BaseModel):

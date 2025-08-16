@@ -524,6 +524,13 @@ async def get_system_info(
     _rate_limit: None = Depends(check_rate_limit)
 ):
     """Get system information."""
+    # RBAC: if auth is enabled, require 'admin' role for system info
+    try:
+        if auth_manager.config.auth_enabled:
+            if not user or ('admin' not in (user.roles or [])):
+                raise HTTPException(status_code=403, detail="Forbidden: admin role required")
+    except Exception:
+        pass
     if "default" not in agents:
         raise HTTPException(
             status_code=500,
