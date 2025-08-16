@@ -12,10 +12,17 @@ import subprocess
 import platform
 import psutil
 import json
+import shlex
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 from openagent.core.base import BaseTool, ToolResult
 from openagent.core.exceptions import ToolError
+from openagent.core.policy import (
+    get_policy_engine, PolicyDecision, RiskLevel
+)
+from openagent.core.observability import (
+    get_logger, get_metrics_collector, get_request_tracker
+)
 
 
 class CommandExecutor(BaseTool):
@@ -51,13 +58,54 @@ class CommandExecutor(BaseTool):
     
     async def execute(self, input_data: Union[str, Dict[str, Any]]) -> ToolResult:
         """Execute a shell command with safety checks."""
+        logger = get_logger(__name__)
+        metrics = get_metrics_collector()
+        tracker = get_request_tracker()
+        
+        # Start timing
+        import time
+        start_time = time.time()
+        
         try:
+            # Track request
+            context = tracker.start_request()
+            request_id = context["request_id"]
+            
+            # Handle None input early
+            if input_data is None:
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error="No command provided"
+                )
+            
             if isinstance(input_data, dict):
                 command = input_data.get("command", "")
                 explain_only = input_data.get("explain_only", self.default_explain_only)
+                confirm = bool(input_data.get("confirm", False))
+                user_id = input_data.get("user_id")
+                block_id = input_data.get("block_id")
+                sandbox = input_data.get("sandbox", False)
             else:
                 command = str(input_data).strip()
                 explain_only = self.default_explain_only
+                confirm = False
+                user_id = None
+                block_id = None
+                sandbox = False
+            
+            # Set logger context with request_id and user_id
+            logger.set_context(request_id=request_id, user_id=user_id)
+            
+            # Log command execution attempt
+            logger.info(
+                "Command execution requested",
+                metadata={
+                    "command": command[:100],  # Truncate for logging
+                    "explain_only": explain_only,
+                    "sandbox": sandbox
+                }
+            )
             
             if not command:
                 return ToolResult(
@@ -66,27 +114,161 @@ class CommandExecutor(BaseTool):
                     error="No command provided"
                 )
             
-            # Security check
-            is_safe, reason = self._is_command_safe(command)
+            # Get policy engine and evaluate command
+            policy_engine = get_policy_engine()
+            policy_decision, risk_level, risk_reasons = await policy_engine.evaluate_command(
+                command, user_id=user_id
+            )
             
-            if not is_safe and not explain_only:
+            # Parse argv for audit
+            try:
+                argv = shlex.split(command)
+            except Exception:
+                argv = command.split()
+            
+            # Track policy evaluation metrics
+            metrics.record_policy_evaluation(
+                decision=policy_decision.value,
+                risk_level=risk_level.value
+            )
+            
+            # Handle policy decisions
+            if policy_decision == PolicyDecision.DENY:
+                # Log denial
+                logger.warning(
+                    "Command denied by policy",
+                    metadata={
+                        "command": command[:100],
+                        "risk_level": risk_level.value,
+                        "risk_reasons": risk_reasons
+                    }
+                )
+                # Commands denied are tracked via policy evaluation
+                # Audit the denied command
+                await policy_engine.audit_command(
+                    command=command,
+                    argv=argv,
+                    risk_level=risk_level,
+                    policy_decision=policy_decision,
+                    executed=False,
+                    user_id=user_id,
+                    block_id=block_id,
+                    error="Command denied by policy"
+                )
                 return ToolResult(
                     success=False,
                     content="",
-                    error=f"Command rejected for security reasons: {reason}"
+                    error=f"Command denied by policy: {', '.join(risk_reasons)}",
+                    metadata={
+                        "command": command,
+                        "risk_level": risk_level.value,
+                        "risk_reasons": risk_reasons,
+                        "policy_decision": policy_decision.value
+                    }
                 )
             
-            # If explain_only is True, just provide explanation
-            if explain_only:
+            # Handle explain-only mode
+            if policy_decision == PolicyDecision.EXPLAIN_ONLY or explain_only:
                 explanation = await self._explain_command(command)
+                # Audit the explanation
+                await policy_engine.audit_command(
+                    command=command,
+                    argv=argv,
+                    risk_level=risk_level,
+                    policy_decision=PolicyDecision.EXPLAIN_ONLY,
+                    executed=False,
+                    user_id=user_id,
+                    block_id=block_id
+                )
                 return ToolResult(
                     success=True,
                     content=explanation,
-                    metadata={"command": command, "explained": True, "explain_only_default": self.default_explain_only}
+                    metadata={
+                        "command": command,
+                        "explained": True,
+                        "risk_level": risk_level.value,
+                        "risk_reasons": risk_reasons,
+                        "policy_decision": policy_decision.value
+                    }
                 )
             
-            # Execute the command
-            result = await self._execute_command(command)
+            # Handle approval requirement
+            if policy_decision == PolicyDecision.REQUIRE_APPROVAL and not confirm:
+                # Audit the approval requirement
+                await policy_engine.audit_command(
+                    command=command,
+                    argv=argv,
+                    risk_level=risk_level,
+                    policy_decision=policy_decision,
+                    executed=False,
+                    user_id=user_id,
+                    block_id=block_id,
+                    error="Requires approval"
+                )
+                result = ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Command requires approval (risk={risk_level.value}). Add 'confirm': true to proceed.",
+                    metadata={
+                        "command": command,
+                        "risk_level": risk_level.value,
+                        "risk_reasons": risk_reasons,
+                        "policy_decision": policy_decision.value,
+                        "suggestions": self._suggest_fixes("")
+                    }
+                )
+                try:
+                    metrics.record_tool_execution(self.name, success=False, duration=(time.time() - start_time))
+                except Exception:
+                    pass
+                return result
+            
+            # If explain_only is True, provide explanation (optionally via LLM)
+            if explain_only:
+                explanation = await self._explain_command(command)
+                # Optionally enhance with LLM explanation if enabled
+                use_llm = os.environ.get("OPENAGENT_TOOL_USE_LLM_EXPLANATION", "0") == "1" or bool(self.config.get("use_llm_explain", False))
+                if use_llm:
+                    try:
+                        from openagent.core.llm import get_llm
+                        llm = get_llm()
+                        llm_expl = await llm.explain_command(command)
+                        if llm_expl and isinstance(llm_expl, str):
+                            explanation = f"{explanation}\n\nLLM details:\n{llm_expl.strip()}"
+                    except Exception:
+                        # Best‑effort; keep basic explanation
+                        pass
+                result = ToolResult(
+                    success=True,
+                    content=explanation,
+                    metadata={
+                        "command": command,
+                        "explained": True,
+                        "explain_only_default": self.default_explain_only,
+                        "risk": risk_level,
+                        "risk_reasons": risk_reasons,
+                    }
+                )
+                try:
+                    metrics.record_tool_execution(self.name, success=True, duration=(time.time() - start_time))
+                except Exception:
+                    pass
+                return result
+            
+            # Execute the command (with sandbox if requested)
+            logger.info(
+                "Executing command",
+                metadata={
+                    "sandbox": sandbox and policy_engine.policy.sandbox_mode
+                }
+            )
+            
+            if sandbox and policy_engine.policy.sandbox_mode:
+                result = await policy_engine.execute_sandboxed(command)
+                # Record as sandboxed execution
+                pass
+            else:
+                result = await self._execute_command(command)
 
             # Normalize error message keywords for tests/consumers
             result_error = result.get("error")
@@ -95,23 +277,116 @@ class CommandExecutor(BaseTool):
                 if "timed out" in low and "timeout" not in low:
                     result_error = result_error + " (timeout)"
             
+            # Audit the execution
+            await policy_engine.audit_command(
+                command=command,
+                argv=argv,
+                risk_level=risk_level,
+                policy_decision=PolicyDecision.ALLOW,
+                executed=True,
+                exit_code=result.get("exit_code"),
+                error=result_error,
+                user_id=user_id,
+                block_id=block_id
+            )
+            
+            suggestions = self._suggest_fixes(result.get("error") or result.get("output") or "")
+            
+            # Track execution metrics
+            execution_time = time.time() - start_time
+            metrics.record_tool_execution(
+                tool_name="CommandExecutor",
+                success=result["success"],
+                duration=execution_time
+            )
+            
+            if result["success"]:
+                logger.info(
+                    "Command executed successfully",
+                    metadata={
+                        "command": command[:100],
+                        "execution_time": execution_time
+                    }
+                )
+            else:
+                logger.error(
+                    "Command execution failed",
+                    error=Exception(result_error) if result_error else None,
+                    metadata={
+                        "command": command[:100],
+                        "execution_time": execution_time
+                    }
+                )
+            
+            # Complete request tracking
+            tracker.end_request()
+            
             return ToolResult(
                 success=result["success"],
-                content=result["output"],
+                content=result["output"] if "output" in result else result.get("stdout", ""),
                 error=result_error,
                 metadata={
                     "command": command,
                     "exit_code": result.get("exit_code"),
-                    "execution_time": result.get("execution_time")
+                    "execution_time": result.get("execution_time"),
+                    "risk_level": risk_level.value,
+                    "risk_reasons": risk_reasons,
+                    "policy_decision": PolicyDecision.ALLOW.value,
+                    "sandboxed": result.get("sandboxed", False),
+                    "suggestions": suggestions
                 }
             )
             
         except Exception as e:
+            try:
+                metrics.record_tool_execution(self.name, success=False, duration=(time.time() - start_time))
+            except Exception:
+                pass
             return ToolResult(
                 success=False,
                 content="",
                 error=f"Command execution failed: {str(e)}"
             )
+
+    def _assess_risk(self, command: str) -> tuple[str, List[str]]:
+        """Assess risk level of a command: low|medium|high with reasons."""
+        cmd = command.lower()
+        reasons: List[str] = []
+        level = "low"
+        # Destructive patterns
+        destructive = [" rm ", " rm -rf", " mkfs", " fdisk", " dd ", ":(){:|:&};:", " :(){:"]
+        if any(pat in cmd for pat in destructive) or cmd.strip().startswith("rm"):
+            level = "high"; reasons.append("destructive operation")
+        # Writes to system paths
+        if "> /etc" in cmd or ">> /etc" in cmd or " /boot" in cmd:
+            level = "high"; reasons.append("writes to system path")
+        # sudo/su usage
+        if " sudo " in f" {cmd} " or cmd.startswith("sudo "):
+            level = "high"; reasons.append("requires elevated privileges")
+        # Networked script execution
+        if "curl" in cmd and "| sh" in cmd or "wget" in cmd and "| sh" in cmd:
+            level = "high"; reasons.append("pipes remote script to shell")
+        # Medium risk operations
+        if any(k in cmd for k in ["chmod ", "chown ", "kill ", "killall ", "> "]):
+            if level != "high":
+                level = "medium"; reasons.append("modifies permissions/processes or writes output")
+        return level, list(set(reasons))
+
+    def _suggest_fixes(self, text: str) -> List[str]:
+        """Suggest common fixes from stderr/output text."""
+        t = text.lower()
+        suggestions: List[str] = []
+        if "command not found" in t or "not found" in t and "git" not in t:
+            suggestions.append("Install the missing command or ensure it is in PATH")
+        if "permission denied" in t:
+            suggestions.append("Check permissions; avoid sudo unless necessary")
+        if "no such file or directory" in t:
+            suggestions.append("Verify the path or create the file/directory")
+        if "could not resolve host" in t or "name or service not known" in t:
+            suggestions.append("Check network/DNS connectivity")
+        if "timeout" in t:
+            suggestions.append("Increase timeout or check if the command hangs")
+        return suggestions
     
     def _is_command_safe(self, command: str) -> tuple[bool, str]:
         """Check if a command is safe to execute."""

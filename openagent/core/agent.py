@@ -10,7 +10,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 from openagent.core.base import BaseAgent, BaseMessage, BaseTool, ToolResult
 from openagent.core.exceptions import AgentError, ToolError
-from openagent.core.llm import HuggingFaceLLM, get_llm
+from openagent.core.llm import get_llm
 
 
 logger = logging.getLogger(__name__)
@@ -51,9 +51,9 @@ class Agent(BaseAgent):
         self.iteration_count = 0
         self.model_name = model_name
         
-        # Initialize LLM
+        # Initialize LLM (routes 'gemini-*' to cloud provider, others to HF)
         llm_config = llm_config or {}
-        self.llm = HuggingFaceLLM(model_name=model_name, **llm_config)
+        self.llm = get_llm(model_name=model_name, **llm_config)
         
         # Agent state
         self.is_processing = False
@@ -99,7 +99,16 @@ class Agent(BaseAgent):
             logger.info(f"Agent '{self.name}' processing message: {input_message.content[:100]}...")
             
             # Process the message and generate response
+            from openagent.core.observability import get_metrics_collector
+            _metrics = get_metrics_collector()
+            import time as _t
+            _start = _t.time()
             response_content = await self._generate_response(input_message.content)
+            _dur = _t.time() - _start
+            try:
+                _metrics.record_agent_message(self.name, success=True, response_time=_dur)
+            except Exception:
+                pass
             
             # Create response message
             response = BaseMessage(
@@ -120,6 +129,11 @@ class Agent(BaseAgent):
             
         except Exception as e:
             logger.error(f"Error processing message in agent '{self.name}': {e}")
+            try:
+                from openagent.core.observability import get_metrics_collector
+                get_metrics_collector().record_agent_message(self.name, success=False, response_time=0.0)
+            except Exception:
+                pass
             error_response = BaseMessage(
                 content=f"I encountered an error while processing your request: {str(e)}",
                 role="assistant",
@@ -164,9 +178,13 @@ class Agent(BaseAgent):
                 "content": msg.content
             })
         
+        # Fast router classification to reduce latency
+        from openagent.core.router import classify, Route
+        route = classify(input_text)
+
         # Determine if this is a code/terminal related query
         code_keywords = ["code", "script", "function", "class", "command", "terminal", "bash", "python", "programming"]
-        is_code_query = any(keyword in input_text.lower() for keyword in code_keywords)
+        is_code_query = (route in (Route.CODEGEN, Route.TOOL)) or any(keyword in input_text.lower() for keyword in code_keywords)
         
         # Build context block for prompt injection (cwd, shell, OS, recent git)
         try:
@@ -195,9 +213,53 @@ class Agent(BaseAgent):
         # Check if we need to use tools
         tool_context = ""
         planned_calls = None
-        if self.tools and await self._should_use_tools(input_text):
-            # Ask model to propose structured tool calls
-            planned_calls = await self._plan_tool_calls(input_text)
+        use_tools = False
+        if self.tools:
+            # First try SmartToolSelector plan using the model
+            try:
+                from openagent.core.tool_selector import SmartToolSelector
+                tools_map = {t.name: t for t in self.tools}
+                selector = SmartToolSelector(self.llm, tools_map)
+                sys_ctx_dict = {"cwd": sysctx.cwd, "shell": sysctx.shell} if 'sysctx' in locals() and sysctx else None
+                plan = await selector.create_tool_plan(input_text, context=sys_ctx_dict)
+                exec_results = await selector.execute_plan(plan)
+                if exec_results:
+                    use_tools = True
+                    tool_context = "\n\nTool Results:\n"
+                    for res, call in zip(exec_results, plan.calls if plan and plan.calls else []):
+                        name = getattr(call, 'tool_name', 'tool')
+                        if res.success:
+                            tool_context += f"- {name}: {str(res.content)[:800]}\n"
+                        else:
+                            tool_context += f"- {name}: Error - {res.error}\n"
+                    # Track used tools
+                    self._tools_used = [getattr(c, 'tool_name', '') for c in (plan.calls or [])]
+                    self.iteration_count += len(exec_results)
+            except Exception:
+                # Fall back to legacy path
+                pass
+
+            # If smart selection didn't run or decided none, apply legacy heuristic
+            if not use_tools:
+                legacy_should = await self._should_use_tools(input_text)
+                if route == Route.TOOL:
+                    use_tools = True
+                elif route == Route.EXPLAIN_ONLY and any(t.name == "command_executor" for t in self.tools):
+                    # Explain a command via CommandExecutor in explain-only mode
+                    planned_calls = [{"name": "command_executor", "args": {"command": input_text, "explain_only": True}}]
+                    use_tools = True
+                elif route == Route.DIRECT or route == Route.CODEGEN:
+                    use_tools = legacy_should
+                else:
+                    use_tools = legacy_should
+
+        if use_tools and not tool_context:
+            # Ask model to propose structured tool calls when not preplanned
+            if planned_calls is None:
+                planned_calls = await self._plan_tool_calls(input_text)
+            # Cap total calls to 2 for responsiveness
+            if planned_calls and len(planned_calls) > 2:
+                planned_calls = planned_calls[:2]
             tool_results = await self._execute_tools(input_text, planned_calls)
             if tool_results:
                 tool_context = "\n\nTool Results:\n"
@@ -207,6 +269,26 @@ class Agent(BaseAgent):
                     else:
                         tool_context += f"- {tool_name}: Error - {result.error}\n"
         
+        # Persist block metadata for history consumers
+        try:
+            self._last_block = {
+                "input": input_text,
+                "plan": {
+                    "calls": [getattr(c, 'tool_name', '') for c in (locals().get('plan').calls if 'plan' in locals() and getattr(locals().get('plan'), 'calls', None) else [])]
+                } if 'plan' in locals() and locals().get('plan') else None,
+                "tool_results": []
+            }
+            if 'exec_results' in locals() and locals().get('exec_results'):
+                for res, call in zip(exec_results, (locals().get('plan').calls if locals().get('plan') else [])):
+                    self._last_block["tool_results"].append({
+                        "tool": getattr(call, 'tool_name', 'tool'),
+                        "success": bool(getattr(res, 'success', False)),
+                        "content": getattr(res, 'content', '')[:2000],
+                        "error": getattr(res, 'error', None),
+                    })
+        except Exception:
+            self._last_block = {"input": input_text}
+
         # Prepare the final prompt with tool context if available
         final_input = input_text
         if tool_context:
@@ -243,6 +325,29 @@ class Agent(BaseAgent):
         heuristics = ["run", "execute", "search", "grep", "status", "log", "diff", "list files", "read file", "show system"]
         return any(k in input_lower for k in heuristics)
     
+    async def _propose_fix_for_command(self, original_command: str, error_text: str) -> Optional[str]:
+        """Use the LLM to propose a safe corrected command for a failed command.
+        Never executes it; returns a string suggestion or None.
+        """
+        if not original_command:
+            return None
+        try:
+            prompt = (
+                "The following shell command failed. Propose a corrected, safer command that likely fixes the issue.\n"
+                "Return ONLY the corrected command, nothing else.\n\n"
+                f"Original command:\n{original_command}\n\n"
+                f"Error/output:\n{error_text}\n"
+            )
+            suggestion = await self.llm.generate_response(prompt, system_prompt="Command Repair")
+            # Extract first line as the command, strip backticks if any
+            if suggestion:
+                line = suggestion.strip().splitlines()[0].strip()
+                line = line.strip("`")
+                return line
+        except Exception:
+            return None
+        return None
+    
     async def _execute_tools(self, input_text: str, planned_calls: Optional[List[Dict[str, Any]]] = None) -> Dict[str, ToolResult]:
         """
         Execute relevant tools based on input text.
@@ -269,6 +374,17 @@ class Agent(BaseAgent):
                 logger.info(f"Executing tool: {tool.name}")
                 args = call.get("args", input_text)
                 result = await tool.execute(args)
+                # If a command fails, propose a non-executed fix via LLM (repair loop proposal)
+                if tool.name == "command_executor" and not result.success:
+                    try:
+                        cmd = args.get("command") if isinstance(args, dict) else str(args)
+                        suggestion = await self._propose_fix_for_command(cmd or "", result.error or (result.content if isinstance(result.content, str) else ""))
+                        if suggestion:
+                            # Attach suggestion to result metadata (non-executed)
+                            result.metadata = result.metadata or {}
+                            result.metadata["suggested_fix_command"] = suggestion
+                    except Exception:
+                        pass
                 results[tool.name] = result
                 self._tools_used.append(tool.name)
                 self.iteration_count += 1

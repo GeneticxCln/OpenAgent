@@ -67,12 +67,23 @@ class GeminiLLM:
         }
 
         loop = asyncio.get_event_loop()
+        from openagent.core.observability import get_metrics_collector
+        import time as _t
+        _metrics = get_metrics_collector()
+        _start = _t.time()
+        success = True
         try:
             resp = await loop.run_in_executor(None, lambda: self.model.generate_content(text, generation_config=gen_cfg))
             out = getattr(resp, "text", None) or ""
             return out.strip()
         except Exception as e:
+            success = False
             raise AgentError(f"Gemini generation failed: {e}")
+        finally:
+            try:
+                _metrics.record_model_inference(self.model_name, success=success, latency=(_t.time() - _start))
+            except Exception:
+                pass
 
     async def analyze_code(self, code: str, language: str = "python") -> str:
         prompt = f"""

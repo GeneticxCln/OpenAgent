@@ -212,6 +212,9 @@ class TestMetricsCollector:
         # Add some metrics
         metrics.record_request("GET", "/test", 200, 0.1)
         metrics.update_active_sessions(3)
+        metrics.record_tool_execution("command_executor", True, 0.01)
+        metrics.record_agent_message("WebAgent", True, 0.02)
+        metrics.record_model_inference("tiny-llama", True, 0.03)
         
         # Get metrics in Prometheus format (or fallback)
         output = metrics.get_metrics()
