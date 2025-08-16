@@ -1,0 +1,20 @@
+# This file defines code ownership for automatic reviews.
+# Use GitHub UI to enforce CODEOWNERS as required reviewers if desired.
+
+# Owners for server and API
+openagent/server/* @GeneticxCln
+
+# Owners for CLI
+openagent/cli.py @GeneticxCln
+
+# Owners for websocket components
+openagent/websocket/* @GeneticxCln
+
+# Docs
+README.md @GeneticxCln
+SECURITY.md @GeneticxCln
+docs/* @GeneticxCln
+
+# CI and GitHub config
+.github/* @GeneticxCln
+
