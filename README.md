@@ -64,6 +64,16 @@ uvicorn openagent.server.app:app --host 0.0.0.0 --port 8000
 # HTTP docs (OpenAPI): http://localhost:8000/docs
 ```
 
+#### Streaming
+- WebSocket: send a CHAT message with {"stream": true}
+- SSE: POST /chat/stream
+
+```bash
+curl -N -H "Accept: text/event-stream" -H "Content-Type: application/json" \
+  -d '{"message":"explain binary search in python","agent":"default"}' \
+  http://localhost:8000/chat/stream
+```
+
 ## 🎯 Usage Examples
 
 ### Interactive Chat

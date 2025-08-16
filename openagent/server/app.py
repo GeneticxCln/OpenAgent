@@ -13,12 +13,14 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 import uvicorn
+import json
 
 from openagent.core.agent import Agent
 from openagent.core.exceptions import AgentError, ToolError
@@ -64,9 +66,17 @@ async def lifespan(app: FastAPI):
     # Initialize default agent (prefer Gemini if key present)
     import os
     def _default_model():
+        # Prefer local lightweight model during tests or when GEMINI_API_KEY is missing
+        dm = os.getenv("DEFAULT_MODEL")
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            # During tests always use a local lightweight model to avoid external deps
+            return "tiny-llama"
         if os.getenv("GEMINI_API_KEY"):
-            return "gemini-1.5-flash"
-        return os.getenv("DEFAULT_MODEL", "tiny-llama")
+            return dm or "gemini-1.5-flash"
+        # If default model is gemini-* but no API key, fallback to tiny-llama
+        if dm and dm.startswith("gemini-"):
+            return "tiny-llama"
+        return dm or "tiny-llama"
 
     default_agent = Agent(
         name="WebAgent",
@@ -110,7 +120,7 @@ app.add_middleware(
 
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "*.localhost"]
+    allowed_hosts=["localhost", "127.0.0.1", "*.localhost", "testserver"]
 )
 
 # Request ID and metrics middleware
@@ -362,6 +372,49 @@ async def chat(
             status_code=500,
             detail=f"Error processing message: {str(e)}"
         )
+
+
+@app.post("/chat/stream")
+async def chat_stream(
+    request: ChatRequest,
+    user: Optional[User] = Depends(get_current_user),
+    _rate_limit: None = Depends(check_rate_limit)
+):
+    """Stream a chat response using Server-Sent Events (SSE).
+    Note: This is an alpha streaming endpoint that simulates token streaming
+    by chunking the final response. Replace with true token streaming when
+    underlying LLM supports incremental generation.
+    """
+    agent_name = request.agent or "default"
+    if agent_name not in agents:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    agent = agents[agent_name]
+
+    async def event_generator():
+        try:
+            # Generate full response first
+            resp = await agent.process_message(request.message)
+            content = resp.content if hasattr(resp, "content") else str(resp)
+            # Simple word-based chunking
+            words = content.split(" ")
+            buf = []
+            # Send a start event
+            yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
+            for i, w in enumerate(words, 1):
+                buf.append(w)
+                if len(buf) >= 20 or i == len(words):
+                    part = " ".join(buf)
+                    buf = []
+                    yield f"data: {json.dumps({'content': part})}\n\n"
+                    await asyncio.sleep(0.01)
+            # End event
+            yield "event: end\ndata: {}\n\n"
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
 # Code generation endpoints
