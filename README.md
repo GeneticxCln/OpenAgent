@@ -11,7 +11,7 @@ A powerful, production-ready AI agent framework powered by Hugging Face models, 
 - **🛠️ Advanced Tools** - System monitoring, file management, command execution
 - **🎨 Rich CLI Interface** - Beautiful terminal interface with syntax highlighting
 - **🔒 Security First** - Safe command execution with built-in security checks
-- **📱 Multiple Interfaces** - CLI chat and single commands (API server planned)
+- **📱 Multiple Interfaces** - CLI chat and single commands; API server and WebSocket streaming (alpha)
 
 ## 🏁 Quick Start
 
@@ -50,6 +50,18 @@ openagent chat --model codellama-7b
 
 # CPU-only mode
 openagent chat --model tiny-llama --device cpu
+```
+
+### 4. Run API Server (alpha)
+
+The HTTP and WebSocket server are available for experimentation.
+
+```bash
+# Start FastAPI server
+uvicorn openagent.server.app:app --host 0.0.0.0 --port 8000
+
+# WebSocket endpoint: ws://localhost:8000/ws
+# HTTP docs (OpenAPI): http://localhost:8000/docs
 ```
 
 ## 🎯 Usage Examples
@@ -200,7 +212,7 @@ OpenAgent/
 
 ## 🔧 Development
 
-Note: This project is currently CLI-first and focused on local usage. An API server and additional interfaces are planned but not yet implemented.
+Note: This project remains CLI-first, but an API server and WebSocket interface are implemented in alpha. Expect breaking changes while server APIs stabilize.
 
 ### Setup Development Environment
 ```bash

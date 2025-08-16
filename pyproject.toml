@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openagent"
-version = "0.1.0"
+version = "0.1.1"
 description = "A modern, extensible AI agent framework for building intelligent applications"
 readme = "README.md"
 license = {text = "MIT"}
@@ -49,6 +49,12 @@ dependencies = [
     "numpy>=1.24.0",
     "psutil>=5.9.0",
     "websockets>=11.0.0",
+    # Server components for daemon and API
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "python-multipart>=0.0.6",
+    # Gemini client so cloud model works out of the box
+    "google-generativeai>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -89,8 +95,11 @@ openai = [
 anthropic = [
     "anthropic>=0.20.0",
 ]
+gemini = [
+    "google-generativeai>=0.7.0",
+]
 all = [
-    "openagent[dev,docs,openai,anthropic]",
+    "openagent[dev,docs,openai,anthropic,gemini]",
 ]
 
 [project.urls]
