@@ -440,7 +440,7 @@ async def healthz():
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "0.1.1",
+        "version": "0.1.3",
         "agents": len(agents)
     }
 
@@ -451,7 +451,7 @@ async def readyz():
     return {
         "status": "ok" if ready else "starting",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "version": "0.1.1",
+        "version": "0.1.3",
         "agents": len(agents)
     }
 
