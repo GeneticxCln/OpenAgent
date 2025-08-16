@@ -47,7 +47,8 @@ class AuthManager:
                 "password_hash": self._hash_password("admin123"),
                 "is_active": True,
                 "created_at": datetime.now(timezone.utc),
-                "last_login": None
+                "last_login": None,
+                "roles": ["admin"]
             },
             "user": {
                 "id": "user",
@@ -56,7 +57,8 @@ class AuthManager:
                 "password_hash": self._hash_password("user123"),
                 "is_active": True,
                 "created_at": datetime.now(timezone.utc),
-                "last_login": None
+                "last_login": None,
+                "roles": ["user"]
             }
         }
     
@@ -93,7 +95,8 @@ class AuthManager:
             email=user_data["email"],
             is_active=user_data["is_active"],
             created_at=user_data["created_at"],
-            last_login=user_data["last_login"]
+            last_login=user_data["last_login"],
+            roles=user_data.get("roles", [])
         )
     
     def create_access_token(self, data: Dict[str, Any]) -> str:
@@ -136,7 +139,8 @@ class AuthManager:
                     email=user_data["email"],
                     is_active=user_data["is_active"],
                     created_at=user_data["created_at"],
-                    last_login=user_data["last_login"]
+                    last_login=user_data["last_login"],
+                    roles=user_data.get("roles", [])
                 )
         return None
     
@@ -172,7 +176,8 @@ class AuthManager:
                 email=None,
                 is_active=True,
                 created_at=datetime.now(timezone.utc),
-                last_login=None
+                last_login=None,
+                roles=[]
             )
         
         if not credentials:
@@ -240,6 +245,7 @@ class AuthManager:
             is_active=user_data["is_active"],
             created_at=user_data["created_at"],
             last_login=user_data["last_login"],
+            roles=user_data.get("roles", [])
         )
         user_data = {
             "id": user_id,

@@ -142,7 +142,7 @@ async def request_context_middleware(request: Request, call_next):
     obs_logger.set_context(request_id=request_id)
 
     try:
-        response: Response = await call_next(request)
+        response = await call_next(request)
         status = response.status_code
     except Exception as e:
         status = 500
@@ -150,7 +150,10 @@ async def request_context_middleware(request: Request, call_next):
         raise
     finally:
         duration = time.time() - start
-        metrics.record_request(method, path, status, duration)
+        try:
+            metrics.record_request(method, path, status, duration)
+        except Exception:
+            pass
         # Clear context
         tracker.end_request()
         obs_logger.clear_context()
