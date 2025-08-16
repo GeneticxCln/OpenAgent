@@ -651,16 +651,20 @@ llm = None
 def get_llm(model_name: str = "codellama-7b", **kwargs):
     """Get or create global LLM instance for a given provider.
 
-    If model_name starts with 'gemini-', route to the Gemini provider.
-    Otherwise, use the local HuggingFace provider.
+    Routing rules:
+    - model_name startswith 'gemini-': use Gemini provider
+    - model_name startswith 'ollama:': use Ollama provider (local)
+    - otherwise: use Hugging Face provider (local)
     """
     global llm
     if model_name and model_name.startswith("gemini-"):
         from .llm_gemini import GeminiLLM
-        # Do not cache globally across providers to avoid cross-config confusion
         return GeminiLLM(model_name=model_name, **kwargs)
+    if model_name and model_name.startswith("ollama:"):
+        from .llm_ollama import OllamaLLM
+        base = model_name.split(":", 1)[1] or "llama3"
+        return OllamaLLM(model_name=base, **kwargs)
     # Default HF path
     if llm is None or getattr(llm, "model_name", None) != model_name:
         llm = HuggingFaceLLM(model_name=model_name, **kwargs)
-    return llm
     return llm
