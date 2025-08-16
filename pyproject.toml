@@ -55,8 +55,6 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
     "python-multipart>=0.0.6",
-    # Gemini client so cloud model works out of the box
-    "google-generativeai>=0.7.0",
 ]
 
 [project.optional-dependencies]
@@ -97,11 +95,8 @@ openai = [
 anthropic = [
     "anthropic>=0.20.0",
 ]
-gemini = [
-    "google-generativeai>=0.7.0",
-]
 all = [
-    "openagent[dev,docs,openai,anthropic,gemini]",
+    "openagent[dev,docs,openai,anthropic]",
 ]
 
 [project.urls]

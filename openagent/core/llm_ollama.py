@@ -40,6 +40,11 @@ class OllamaLLM:
     Usage:
       - model_name: the Ollama model tag, e.g., "llama3", "mistral", "qwen2.5"
       - host: Ollama server base URL (default http://127.0.0.1:11434)
+
+    Behavior (local-first hardening):
+      - On first use, verifies the Ollama server is reachable at host (/api/version)
+      - If unreachable and the 'ollama' binary exists, attempts to auto-start it (best-effort)
+      - Waits briefly for readiness; if still unreachable, raises a clear, actionable error
     """
 
     def __init__(
@@ -60,6 +65,46 @@ class OllamaLLM:
         self.options.setdefault("temperature", self.temperature)
         self.options.setdefault("num_predict", self.max_length)
         # No heavy init required; Ollama runs as a local server
+        self._server_ready = False
+
+    async def _ensure_server(self) -> None:
+        """Ensure the Ollama server is reachable; try to auto-start if not.
+        Best-effort: if 'ollama' binary is available, start it in background.
+        """
+        if self._server_ready:
+            return
+        base = self.host
+        try:
+            async with httpx.AsyncClient(timeout=1.0) as client:
+                r = await client.get(f"{base}/api/version")
+                r.raise_for_status()
+                self._server_ready = True
+                return
+        except Exception:
+            pass
+        # Try to auto-start ollama serve (non-blocking) if binary exists
+        try:
+            import shutil, subprocess, time
+            if shutil.which("ollama"):
+                # Start only if nothing is listening to avoid duplicate servers
+                subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # Wait up to ~4.5s for readiness
+                for _ in range(30):
+                    try:
+                        async with httpx.AsyncClient(timeout=0.3) as client:
+                            r = await client.get(f"{base}/api/version")
+                            if r.status_code == 200:
+                                self._server_ready = True
+                                return
+                    except Exception:
+                        pass
+                    time.sleep(0.15)
+        except Exception:
+            pass
+        # Still not ready: raise clear error
+        raise RuntimeError(
+            f"Ollama server not reachable at {self.host}. Start it with 'ollama serve' and ensure your model ('{self.model_name}') is installed."
+        )
 
     async def generate_response(
         self,
@@ -68,16 +113,25 @@ class OllamaLLM:
         **kwargs: Any,
     ) -> Any:
         """Non-streaming generation via Ollama /api/generate (stream=false)."""
+        await self._ensure_server()
         payload = {
             "model": self.model_name,
             "prompt": prompt if not system_prompt else f"{system_prompt}\n\n{prompt}",
             "stream": False,
             "options": self.options,
         }
-        async with httpx.AsyncClient(timeout=None) as client:
-            r = await client.post(f"{self.host}/api/generate", json=payload)
-            r.raise_for_status()
-            data = r.json()
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                r = await client.post(f"{self.host}/api/generate", json=payload)
+                r.raise_for_status()
+                data = r.json()
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response else None
+            if status == 404:
+                raise RuntimeError(
+                    f"Ollama endpoint returned 404 at {self.host}/api/generate. Is Ollama running and serving the HTTP API on this port?"
+                ) from e
+            raise
         # Ollama returns { response: str, ... }
         class R:
             pass
@@ -93,6 +147,7 @@ class OllamaLLM:
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Streaming generation via Ollama /api/generate (stream=true)."""
+        await self._ensure_server()
         payload = {
             "model": self.model_name,
             "prompt": prompt if not system_prompt else f"{system_prompt}\n\n{prompt}",
@@ -101,7 +156,15 @@ class OllamaLLM:
         }
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream("POST", f"{self.host}/api/generate", json=payload) as resp:
-                resp.raise_for_status()
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as e:
+                    status = e.response.status_code if e.response else None
+                    if status == 404:
+                        raise RuntimeError(
+                            f"Ollama endpoint returned 404 at {self.host}/api/generate. Is Ollama running and serving the HTTP API on this port?"
+                        ) from e
+                    raise
                 async for line in resp.aiter_lines():
                     if not line:
                         continue

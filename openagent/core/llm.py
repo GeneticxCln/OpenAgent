@@ -649,17 +649,13 @@ Please provide:
 # Global LLM instance
 llm = None
 def get_llm(model_name: str = "codellama-7b", **kwargs):
-    """Get or create global LLM instance for a given provider.
+    """Get or create global LLM instance.
 
-    Routing rules:
-    - model_name startswith 'gemini-': use Gemini provider
+    Routing rules (local-only):
     - model_name startswith 'ollama:': use Ollama provider (local)
     - otherwise: use Hugging Face provider (local)
     """
     global llm
-    if model_name and model_name.startswith("gemini-"):
-        from .llm_gemini import GeminiLLM
-        return GeminiLLM(model_name=model_name, **kwargs)
     if model_name and (model_name == "ollama" or model_name.startswith("ollama:")):
         from .llm_ollama import OllamaLLM, get_default_ollama_model
         # Resolve base tag

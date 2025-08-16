@@ -23,7 +23,7 @@ Command Execution Safety
 
 Secret Management
 - Never log secrets.
-- Use environment variables or a secret manager to store API keys (e.g., GEMINI_API_KEY, HUGGINGFACE_TOKEN).
+- Use environment variables or a secret manager to store API keys (e.g., HUGGINGFACE_TOKEN).
 
 Rate Limiting and Abuse Prevention
 - Enable rate limiting to mitigate abuse.

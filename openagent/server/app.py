@@ -67,10 +67,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     
-    # Initialize default agent (prefer Gemini if key present)
+    # Initialize default agent (local-only)
     import os
     def _default_model():
-        # Prefer Ollama local model if available, else Gemini if key present, else tiny-llama
+        # Prefer Ollama local model if available; otherwise tiny-llama
         dm = os.getenv("DEFAULT_MODEL")
         if os.getenv("PYTEST_CURRENT_TEST"):
             return "tiny-llama"
@@ -86,9 +86,6 @@ async def lifespan(app: FastAPI):
                 return f"ollama:{m}"
         except Exception:
             pass
-        # Try Gemini
-        if os.getenv("GEMINI_API_KEY"):
-            return "gemini-1.5-flash"
         return "tiny-llama"
 
     default_agent = Agent(

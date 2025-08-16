@@ -6,105 +6,84 @@ def zsh_integration_snippet() -> str:
     """
     Return a zsh snippet that integrates OpenAgent with the interactive shell.
 
-    Features:
-    - Pre-exec explanation: if OPENAGENT_EXPLAIN=1, prints a short explanation
-      of the command before it runs, using `openagent explain`.
-    - Risky command warning: if OPENAGENT_WARN=1, prints a warning for obviously
-      dangerous patterns (rm -rf /, mkfs, fdisk, etc.).
-    - Confirmation mode: if OPENAGENT_CONFIRM=1, prompt to proceed (shows a
-      brief explanation) before running the command. Default is No.
-    - Block risky: if OPENAGENT_BLOCK_RISKY=1, block execution of risky commands.
-    - Optional keybinding: Ctrl-g to explain the current buffer (if ZLE is enabled).
+    Features (Warp-like behavior):
+    - Policy-first: validate command (allow|warn|block). Blocks are aborted inline.
+    - Inline explain: brief, non-blocking summary; uses timeout if available.
+    - Confirmation: prompt to approve risky/warned commands with a single key (y).
+    - Env toggles: OPENAGENT_EXPLAIN=1, OPENAGENT_WARN=1, OPENAGENT_CONFIRM=1.
     """
     return r'''
 # --- OpenAgent zsh integration start ---
-# Enable or disable features via environment variables in your shell rc file:
-#   export OPENAGENT_EXPLAIN=1       # Explain commands before running (non-blocking)
-#   export OPENAGENT_WARN=1          # Warn on risky commands
-#   export OPENAGENT_CONFIRM=1       # Ask for confirmation before running (shows summary)
-#   export OPENAGENT_BLOCK_RISKY=1   # Block risky commands outright
+# Enable features in your ~/.zshrc:
+#   export OPENAGENT_EXPLAIN=1       # Show short explanation
+#   export OPENAGENT_WARN=1          # Print warnings
+#   export OPENAGENT_CONFIRM=1       # Ask approval (y/N) for non-allow decisions
 #
-# Pre-execution hook
+# Helper: run with 1.5s timeout if GNU timeout exists
+_openagent_run_with_timeout() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 1.5 "$@"
+  else
+    "$@"
+  fi
+}
+
+# Pre-execution hook (runs just before executing the typed command)
 function preexec() {
   local cmd="$1"
+  [[ -z "$cmd" ]] && return 0
 
-  # Consult OpenAgent validator for decision
+  # 1) Policy decision (quiet)
   local decision
   decision=$(command openagent validate "$cmd" --quiet 2>/dev/null)
-  if [[ -z "$decision" ]]; then
-    decision="warn"
-  fi
+  [[ -z "$decision" ]] && decision="warn"
 
+  # 2) BLOCK immediately
   if [[ "$decision" == "block" ]]; then
-    echo "[OpenAgent] Blocked by policy: $cmd" 1>&2
-    false
-    fc -p
-    zle && zle push-input
-    return 130
-  fi
-  if [[ "$decision" == "warn" ]]; then
-    echo "[OpenAgent] Warning (policy): $cmd" 1>&2
-  fi
-    risky=1
+    echo "[OpenAgent] BLOCK: $cmd" 1>&2
+    # Abort current line
+    false; fc -p; zle && zle push-input; return 130
   fi
 
-  # Block risky outright if requested
-  if [[ -n "$OPENAGENT_BLOCK_RISKY" && $risky -eq 1 ]]; then
-    echo "[OpenAgent] Blocked risky command: $cmd" >&2
-    # abort the command by replacing it with a no-op and killing the current line
-    false
-    fc -p
-    zle && zle push-input
-    return 130
+  # 3) WARN inline if requested
+  if [[ -n "$OPENAGENT_WARN" && "$decision" == "warn" ]]; then
+    echo "[OpenAgent] WARNING: $cmd" 1>&2
   fi
 
-  # Warn on risky commands
-  if [[ -n "$OPENAGENT_WARN" && $risky -eq 1 ]]; then
-    echo "[OpenAgent] Warning: command may be dangerous: $cmd" >&2
-  fi
-
-  # Explain command in background (non-blocking)
+  # 4) EXPLAIN briefly (non-blocking) if requested
   if [[ -n "$OPENAGENT_EXPLAIN" ]]; then
     (
-      command openagent explain "$cmd" 2>/dev/null | sed -n '1,12p' | sed 's/^/[OpenAgent] /'
+      _openagent_run_with_timeout command openagent explain "$cmd" 2>/dev/null \
+        | sed -n '1,8p' | sed 's/^/[OpenAgent] /'
     ) &
   fi
 
-  # Confirmation mode (blocks until user decides)
-  if [[ -n "$OPENAGENT_CONFIRM" ]]; then
-    local summary
-    summary=$(command openagent explain "$cmd" 2>/dev/null | sed -n '1,8p' | sed 's/^/[OpenAgent] /')
-    if [[ -n "$summary" ]]; then
-      echo "$summary"
-    fi
-    printf "[OpenAgent] Proceed? [y/N] " >&2
-    # read a single keypress (y/Y to proceed)
+  # 5) CONFIRM for non-allow decisions (or if explicitly enabled)
+  if [[ -n "$OPENAGENT_CONFIRM" || "$decision" == "warn" ]]; then
+    printf "[OpenAgent] Proceed? [y/N] " 1>&2
     local key
     stty -g > /tmp/.openagent_stty
     stty -icanon -echo min 1 time 0
     key=$(dd bs=1 count=1 2>/dev/null)
     stty $(cat /tmp/.openagent_stty) 2>/dev/null
-    echo "" >&2
+    echo "" 1>&2
     if [[ "$key" != "y" && "$key" != "Y" ]]; then
-      echo "[OpenAgent] Command cancelled" >&2
-      false
-      fc -p
-      zle && zle push-input
-      return 130
+      echo "[OpenAgent] Cancelled" 1>&2
+      false; fc -p; zle && zle push-input; return 130
     fi
   fi
 }
 
-# Explain current ZLE buffer with Ctrl-G (if interactive line editor is active)
+# Explain current ZLE buffer with Ctrl-G (interactive editor)
 if [[ -n "$ZSH_VERSION" && -o interactive && $+functions[zle] -gt 0 ]]; then
   function _openagent_explain_buffer() {
     local cmd=${BUFFER}
     if [[ -z "$cmd" ]]; then
-      zle -M "OpenAgent: buffer is empty"
-      return 0
+      zle -M "OpenAgent: buffer is empty"; return 0
     fi
     print -l "[OpenAgent] Explaining: $cmd"
-    command openagent explain "$cmd" 2>/dev/null | sed -n '1,20p' | sed 's/^/[OpenAgent] /'
+    _openagent_run_with_timeout command openagent explain "$cmd" 2>/dev/null \
+      | sed -n '1,20p' | sed 's/^/[OpenAgent] /'
     zle redisplay
   }
   zle -N _openagent_explain_buffer

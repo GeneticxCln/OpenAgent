@@ -51,7 +51,7 @@ class Agent(BaseAgent):
         self.iteration_count = 0
         self.model_name = model_name
         
-        # Initialize LLM (routes 'gemini-*' to cloud provider, others to HF)
+        # Initialize LLM (local-only routing: Ollama or Hugging Face)
         llm_config = llm_config or {}
         self.llm = get_llm(model_name=model_name, **llm_config)
         

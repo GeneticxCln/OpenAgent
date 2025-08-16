@@ -12,7 +12,7 @@ from dotenv import dotenv_values
 
 COMMON_SECRET_KEYS = {
     "API_KEY", "API_TOKEN", "SECRET", "PASSWORD", "PASS", "TOKEN",
-    "GEMINI_API_KEY", "OPENAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_TOKEN",
+    "OPENAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_TOKEN",
 }
 
 # Simple patterns for common token formats (best-effort)

@@ -162,26 +162,21 @@ def create_agent(
 
 @app.command()
 def menu():
-    """Pick an agent/model and start chat immediately (safe/fast defaults)."""
+    """Pick an agent/model and start chat immediately (safe/fast defaults, local-only)."""
     from openagent.core.llm import ModelConfig
 
-    has_gemini = bool(os.getenv("GEMINI_API_KEY"))
-
-    # Build model choices
+    # Local-only build: do not include any cloud/Gemini options
     code_models = list(ModelConfig.CODE_MODELS.keys())
     chat_models = list(ModelConfig.CHAT_MODELS.keys())
     light_models = list(ModelConfig.LIGHTWEIGHT_MODELS.keys())
-    gemini_models = ["gemini-1.5-flash", "gemini-1.5-pro"] if has_gemini else []
 
     sections = [
         ("Lightweight", light_models),
         ("Code", code_models),
         ("Chat", chat_models),
     ]
-    if gemini_models:
-        sections.append(("Gemini (cloud)", gemini_models))
 
-    console.print(Panel.fit("Choose your agent/model", title="OpenAgent"))
+    console.print(Panel.fit("Choose your agent/model (local only)", title="OpenAgent"))
 
     # Category selection
     for idx, (title, _) in enumerate(sections, start=1):
@@ -219,25 +214,14 @@ def menu():
 
 
 def _ensure_gemini_key_interactive() -> bool:
-    """Prompt for GEMINI_API_KEY if missing. Returns True if key was provided."""
-    if os.getenv("GEMINI_API_KEY"):
-        return True
-    console.print("[dim]GEMINI_API_KEY not set.[/dim]")
-    try:
-        key = getpass.getpass("Paste your GEMINI_API_KEY (leave blank to skip): ").strip()
-    except Exception:
-        key = ""
-    if not key:
-        return False
-    # Set in current process only; do not print
-    os.environ["GEMINI_API_KEY"] = key
-    console.print("[green]Gemini key received. Activating Gemini for this session.[/green]")
-    return True
+    """Local-only build: Gemini is disabled. Always return False without prompting."""
+    return False
 
 
 @app.command()
 def chat(
-    model: str = typer.Option("auto", help="Model to use for responses (auto=gemini if key set, else tiny-llama)"),
+    model: str = typer.Option("auto", help="Model to use for responses (auto resolves per provider)"),
+    provider: str = typer.Option("auto", help="Provider: auto|local|cloud"),
     device: str = typer.Option("auto", help="Device to run model on (auto/cpu/cuda)"),
     load_in_4bit: bool = typer.Option(True, help="Load model in 4-bit precision"),
     debug: bool = typer.Option(False, help="Enable debug logging"),
@@ -260,21 +244,31 @@ def chat(
     
     # Resolve automatic model choice (prompt for Gemini key if missing)
     resolved_model = model
-    if model == "auto":
-        # Prefer local Ollama if available
+    # Provider-aware resolution
+    if provider not in ("auto", "local", "cloud"):
+        raise typer.BadParameter("--provider must be one of: auto|local|cloud")
+    if provider == "local":
+        # Force local: Ollama if installed, else tiny-llama
         try:
             import asyncio as _asyncio
             from openagent.core.llm_ollama import get_default_ollama_model
             m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
         except Exception:
             m = None
-        if m:
-            resolved_model = f"ollama:{m}"
-        else:
-            # If no key, ask the user once (optional)
-            if not os.getenv("GEMINI_API_KEY"):
-                _ensure_gemini_key_interactive()
-            resolved_model = "gemini-1.5-flash" if os.getenv("GEMINI_API_KEY") else "tiny-llama"
+        resolved_model = f"ollama:{m}" if m else (model if model != "auto" else "tiny-llama")
+    elif provider == "cloud":
+        # Local-only build: cloud provider is disabled
+        raise typer.BadParameter("Cloud provider is disabled in local-only mode. Use --provider local and a local model (e.g., --model 'ollama:\u003cname\u003e').")
+    else:
+        # auto provider: prefer Ollama, else tiny (never use Gemini)
+        if model == "auto":
+            try:
+                import asyncio as _asyncio
+                from openagent.core.llm_ollama import get_default_ollama_model
+                m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
+            except Exception:
+                m = None
+            resolved_model = f"ollama:{m}" if m else "tiny-llama"
 
     console.print(Panel.fit(
         "[bold blue]OpenAgent Terminal Assistant[/bold blue]\n"
@@ -1145,104 +1139,56 @@ def integrate(
 
 @app.command()
 def setup():
-    """First-run setup: choose Local or Cloud and configure .env.
+    """First-run setup (local-only): configure .env for local models.
 
-    - Local: tiny model, 4-bit, device auto/cuda.
-    - Cloud: set or prompt for GEMINI_API_KEY and default to gemini-1.5-flash.
+    - Local: tiny model fallback, 4-bit, device auto/cuda.
     """
     load_dotenv()
-    console.print(Panel.fit("Welcome to OpenAgent setup", title="First Run"))
-    console.print("Choose your default mode:\n  1) Cloud (Gemini) - fast startup, requires API key\n  2) Local - runs on your machine (tiny model by default)")
-    choice = (console.input("Choice [1/2]: ").strip() or "1")
+    console.print(Panel.fit("Welcome to OpenAgent setup (local-only)", title="First Run"))
 
     env_path = Path.cwd() / ".env"
-    # Load existing .env if present
     existing = env_path.read_text() if env_path.exists() else ""
 
     def write_env(lines: str):
         env_path.write_text(lines)
         console.print(Panel(f"Updated {env_path}", title="Config"))
 
-    if choice == "1":
-        # Cloud
-        if not os.getenv("GEMINI_API_KEY"):
-            _ensure_gemini_key_interactive()
-        # Persist key for future sessions (silent)
-        try:
-            if os.getenv("GEMINI_API_KEY"):
-                GLOBAL_KEYS_ENV.parent.mkdir(parents=True, exist_ok=True)
-                # Avoid writing quotes; overwrite existing
-                GLOBAL_KEYS_ENV.write_text(f"GEMINI_API_KEY={os.getenv('GEMINI_API_KEY')}\n")
-        except Exception:
-            pass
-        # Update .env
-        lines = []
-        found = set()
-        for line in existing.splitlines():
-            if line.startswith("DEFAULT_MODEL="):
-                lines.append("DEFAULT_MODEL=gemini-1.5-flash")
-                found.add("DEFAULT_MODEL")
-            elif line.startswith("DEFAULT_DEVICE="):
-                lines.append("DEFAULT_DEVICE=auto")
-                found.add("DEFAULT_DEVICE")
-            else:
-                lines.append(line)
-        if "DEFAULT_MODEL" not in found:
-            lines.append("DEFAULT_MODEL=gemini-1.5-flash")
-        if "DEFAULT_DEVICE" not in found:
-            lines.append("DEFAULT_DEVICE=auto")
-        if not lines:
-            lines = [
-                "DEFAULT_MODEL=gemini-1.5-flash",
-                "DEFAULT_DEVICE=auto",
-                "LOAD_IN_4BIT=true",
-            ]
-        write_env("\n".join(filter(None, lines)) + "\n")
-        console.print("[green]Cloud mode configured. Starting chat...[/green]")
-        # Immediately start chat in cloud mode for simplicity
-        try:
-            chat(model="auto", device="auto", load_in_4bit=True, debug=False, unsafe_exec=False, max_new_tokens=128, temperature=0.5)
-            return
-        except Exception as _e:
-            console.print("[yellow]Failed to auto-start chat. You can run: openagent chat --model auto[/yellow]")
-    else:
-        # Local
-        lines = []
-        found = set()
-        for line in existing.splitlines():
-            if line.startswith("DEFAULT_MODEL="):
-                lines.append("DEFAULT_MODEL=tiny-llama")
-                found.add("DEFAULT_MODEL")
-            elif line.startswith("DEFAULT_DEVICE="):
-                # Prefer cuda if available per doctor, else auto
-                preferred = "cuda"
-                try:
-                    import torch  # type: ignore
-                    if not torch.cuda.is_available():
-                        preferred = "auto"
-                except Exception:
-                    preferred = "auto"
-                lines.append(f"DEFAULT_DEVICE={preferred}")
-                found.add("DEFAULT_DEVICE")
-            elif line.startswith("LOAD_IN_4BIT="):
-                lines.append("LOAD_IN_4BIT=true")
-                found.add("LOAD_IN_4BIT")
-            else:
-                lines.append(line)
-        if "DEFAULT_MODEL" not in found:
+    # Local-only defaults
+    lines = []
+    found = set()
+    for line in existing.splitlines():
+        if line.startswith("DEFAULT_MODEL="):
             lines.append("DEFAULT_MODEL=tiny-llama")
-        if "DEFAULT_DEVICE" not in found:
-            lines.append("DEFAULT_DEVICE=auto")
-        if "LOAD_IN_4BIT" not in found:
+            found.add("DEFAULT_MODEL")
+        elif line.startswith("DEFAULT_DEVICE="):
+            preferred = "cuda"
+            try:
+                import torch  # type: ignore
+                if not torch.cuda.is_available():
+                    preferred = "auto"
+            except Exception:
+                preferred = "auto"
+            lines.append(f"DEFAULT_DEVICE={preferred}")
+            found.add("DEFAULT_DEVICE")
+        elif line.startswith("LOAD_IN_4BIT="):
             lines.append("LOAD_IN_4BIT=true")
-        if not lines:
-            lines = [
-                "DEFAULT_MODEL=tiny-llama",
-                "DEFAULT_DEVICE=auto",
-                "LOAD_IN_4BIT=true",
-            ]
-        write_env("\n".join(filter(None, lines)) + "\n")
-        console.print("[green]Local mode configured. Use: openagent daemon then openagent chat --model auto[/green]")
+            found.add("LOAD_IN_4BIT")
+        else:
+            lines.append(line)
+    if "DEFAULT_MODEL" not in found:
+        lines.append("DEFAULT_MODEL=tiny-llama")
+    if "DEFAULT_DEVICE" not in found:
+        lines.append("DEFAULT_DEVICE=auto")
+    if "LOAD_IN_4BIT" not in found:
+        lines.append("LOAD_IN_4BIT=true")
+    if not lines:
+        lines = [
+            "DEFAULT_MODEL=tiny-llama",
+            "DEFAULT_DEVICE=auto",
+            "LOAD_IN_4BIT=true",
+        ]
+    write_env("\n".join(filter(None, lines)) + "\n")
+    console.print("[green]Local mode configured. Use: openagent daemon then openagent chat --model auto[/green]")
 
     _set_first_run_completed()
 
@@ -1414,16 +1360,13 @@ def daemon(
     host: str = typer.Option("127.0.0.1", help="Daemon host"),
     port: int = typer.Option(8765, help="Daemon port"),
 ):
-    """Start a background agent daemon (preloads default model)."""
+    """Start a background agent daemon (preloads default local model)."""
     load_dotenv()
-    # Prompt once to enable Gemini if available
-    if not os.getenv("GEMINI_API_KEY"):
-        _ensure_gemini_key_interactive()
     console.print(Panel(f"Starting OpenAgent daemon on {host}:{port}", title="Daemon"))
     try:
         import uvicorn  # type: ignore
-        # Ensure default model picks Gemini if key is set
-        os.environ.setdefault("DEFAULT_MODEL", "gemini-1.5-flash" if os.getenv("GEMINI_API_KEY") else "tiny-llama")
+        # Local-only default model
+        os.environ.setdefault("DEFAULT_MODEL", "tiny-llama")
         uvicorn.run("openagent.server.app:app", host=host, port=port, reload=False, log_level="warning")
     except Exception as e:
         console.print(f"[red]Failed to start daemon: {e}[/red]")
