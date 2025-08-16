@@ -8,7 +8,9 @@ const token = process.argv[3] || null;
 
 const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-// Node's WebSocket API (global in Node 18+)
+// Use 'ws' package for Node.js
+// npm install ws
+const WebSocket = require('ws');
 const ws = new WebSocket(url, { headers });
 
 ws.addEventListener('open', () => {

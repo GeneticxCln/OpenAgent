@@ -110,6 +110,8 @@ Example clients:
 - Python: examples/ws_client.py
 - JavaScript (Node 18+): examples/ws_client.js
 
+For security guidance and RBAC considerations, see SECURITY.md.
+
 ## 🎯 Usage Examples
 
 ### Interactive Chat
