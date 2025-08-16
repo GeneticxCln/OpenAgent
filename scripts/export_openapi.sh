@@ -5,6 +5,7 @@ set -euo pipefail
 # Requires uvicorn, curl, and a free port.
 
 PORT=${1:-8042}
+OUT=${2:-openapi.json}
 HOST=127.0.0.1
 APP="openagent.server.app:app"
 
@@ -22,11 +23,11 @@ for i in $(seq 1 30); do
 done
 
 # Fetch OpenAPI JSON
-curl -fsS "http://$HOST:$PORT/openapi.json" > openapi.json
+curl -fsS "http://$HOST:$PORT/openapi.json" > "$OUT"
 
 # Stop server
 kill $PID 2>/dev/null || true
 wait $PID 2>/dev/null || true
 
-echo "Wrote openapi.json"
+echo "Wrote $OUT"
 

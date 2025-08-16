@@ -35,3 +35,8 @@ jobs:
       - name: Tests (quick)
         run: pytest -q
 
+      - name: OpenAPI schema drift check
+        run: |
+          ./scripts/export_openapi.sh 8051 /tmp/openapi.json
+          diff -u openapi.json /tmp/openapi.json || (echo "OpenAPI schema drift detected. Run scripts/export_openapi.sh and commit updated openapi.json" && exit 1)
+
