@@ -144,6 +144,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Enhanced OpenAPI schema
+from openagent.server.openapi_enhancement import enhance_openapi_schema
+app.openapi = lambda: enhance_openapi_schema(app)
+
+# API Versioning
+from openagent.server.versioning import versioning, VersionInfo
+
 # Add middleware
 app.add_middleware(
     CORSMiddleware,
@@ -163,6 +170,12 @@ import uuid as _uuid
 # Request ID and metrics middleware
 from fastapi.responses import PlainTextResponse, Response
 
+
+# Add versioning middleware
+@app.middleware("http")
+async def api_versioning_middleware(request: Request, call_next):
+    """Handle API versioning for requests."""
+    return await versioning.version_middleware(request, call_next)
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
@@ -561,6 +574,54 @@ async def metrics_endpoint():
     except Exception:
         pass
     return Response(content=data, media_type=content_type)
+
+
+# API Information endpoints
+@app.get("/api/version", response_model=VersionInfo)
+async def get_api_version():
+    """Get comprehensive API version information."""
+    return versioning.get_version_info()
+
+
+@app.get("/api/status")
+async def get_api_status():
+    """Get comprehensive API status and capabilities."""
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.3",
+        "api_version": versioning.current_version.value,
+        "status": "operational",
+        "capabilities": {
+            "chat": True,
+            "streaming": True,
+            "websockets": True,
+            "code_generation": True,
+            "code_analysis": True,
+            "authentication": auth_manager.config.auth_enabled if hasattr(auth_manager.config, 'auth_enabled') else False,
+            "rate_limiting": True,
+            "metrics": True,
+            "observability": True
+        },
+        "agents": {
+            "available": list(agents.keys()),
+            "count": len(agents),
+            "default": "default"
+        },
+        "models": {
+            "categories": ["code", "chat", "lightweight"],
+            "supports_streaming": True,
+            "supports_ollama": True
+        },
+        "limits": {
+            "max_message_length": 4096,
+            "max_code_length": 10000,
+            "rate_limits": {
+                "chat": "100/min",
+                "code_generation": "20/min",
+                "system_info": "30/min"
+            }
+        }
+    }
 
 
 # Authentication endpoints
