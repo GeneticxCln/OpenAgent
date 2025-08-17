@@ -4,12 +4,13 @@ Git and repository tools for OpenAgent.
 Provides safe, non-interactive wrappers around common git operations and
 repo-wide text search/grep.
 """
+
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Union, Any, List
+from typing import Any, Dict, List, Optional, Union
 
 from openagent.core.base import BaseTool, ToolResult
 
@@ -37,7 +38,11 @@ class GitTool(BaseTool):
     """Safe git queries (status, log, diff, branch, show)."""
 
     def __init__(self, **kwargs):
-        super().__init__(name="git_tool", description="Safe git operations (status, log, diff, branch, show)", **kwargs)
+        super().__init__(
+            name="git_tool",
+            description="Safe git operations (status, log, diff, branch, show)",
+            **kwargs,
+        )
 
     async def execute(self, input_data: Union[str, Dict[str, Any]]) -> ToolResult:
         try:
@@ -50,7 +55,11 @@ class GitTool(BaseTool):
                 args = parts[1:]
 
             if sub not in SAFE_GIT_SUBCOMMANDS:
-                return ToolResult(success=False, content="", error=f"Unsupported git subcommand: {sub}")
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error=f"Unsupported git subcommand: {sub}",
+                )
 
             # Filter args to safe allowlist patterns
             allowed_prefixes = SAFE_GIT_SUBCOMMANDS[sub]
@@ -71,13 +80,17 @@ class GitTool(BaseTool):
                 success=result["success"],
                 content=result["output"],
                 error=result.get("error"),
-                metadata={"command": cmd.to_shell(), "exit_code": result.get("exit_code")},
+                metadata={
+                    "command": cmd.to_shell(),
+                    "exit_code": result.get("exit_code"),
+                },
             )
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
 
     async def _run(self, command: str) -> Dict[str, Any]:
         import time
+
         start = time.time()
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -86,14 +99,27 @@ class GitTool(BaseTool):
                 stderr=asyncio.subprocess.PIPE,
             )
             try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=15.0
+                )
             except asyncio.TimeoutError:
                 proc.terminate()
                 await proc.wait()
-                return {"success": False, "output": "", "error": "git command timeout", "exit_code": -1}
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": "git command timeout",
+                    "exit_code": -1,
+                }
             out = stdout.decode("utf-8", errors="replace").strip()
             err = stderr.decode("utf-8", errors="replace").strip()
-            return {"success": proc.returncode == 0, "output": out if out else err, "error": None if proc.returncode == 0 else err, "exit_code": proc.returncode, "duration": time.time() - start}
+            return {
+                "success": proc.returncode == 0,
+                "output": out if out else err,
+                "error": None if proc.returncode == 0 else err,
+                "exit_code": proc.returncode,
+                "duration": time.time() - start,
+            }
         except Exception as e:
             return {"success": False, "output": "", "error": str(e), "exit_code": -1}
 
@@ -102,7 +128,11 @@ class RepoGrep(BaseTool):
     """Non-interactive repo-wide search/grep utility."""
 
     def __init__(self, **kwargs):
-        super().__init__(name="repo_grep", description="Search repository files using ripgrep or grep", **kwargs)
+        super().__init__(
+            name="repo_grep",
+            description="Search repository files using ripgrep or grep",
+            **kwargs,
+        )
 
     async def execute(self, input_data: Union[str, Dict[str, Any]]) -> ToolResult:
         try:
@@ -117,12 +147,19 @@ class RepoGrep(BaseTool):
                 flags = ["-n", "-H", "-I"]
 
             if not pattern:
-                return ToolResult(success=False, content="", error="pattern is required")
+                return ToolResult(
+                    success=False, content="", error="pattern is required"
+                )
 
             # Prefer ripgrep if available for speed
             cmd = await self._pick_search_cmd(pattern, path, flags)
             result = await self._run(cmd)
-            return ToolResult(success=result["success"], content=result["output"], error=result.get("error"), metadata={"command": cmd})
+            return ToolResult(
+                success=result["success"],
+                content=result["output"],
+                error=result.get("error"),
+                metadata={"command": cmd},
+            )
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
 
@@ -133,11 +170,23 @@ class RepoGrep(BaseTool):
             safe_flags = ["--no-messages", "--hidden", "--line-number", "--color=never"]
             return " ".join(["rg", *safe_flags, pattern, path])
         # Fallback to grep -r
-        return " ".join(["grep", "-r", "--binary-files=without-match", "--line-number", "--color=never", pattern, path])
+        return " ".join(
+            [
+                "grep",
+                "-r",
+                "--binary-files=without-match",
+                "--line-number",
+                "--color=never",
+                pattern,
+                path,
+            ]
+        )
 
     async def _which(self, prog: str) -> bool:
         proc = await asyncio.create_subprocess_shell(
-            f"command -v {prog}", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            f"command -v {prog}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
         await proc.communicate()
         return proc.returncode == 0
@@ -152,6 +201,11 @@ class RepoGrep(BaseTool):
             stdout, stderr = await proc.communicate()
             out = stdout.decode("utf-8", errors="replace").strip()
             err = stderr.decode("utf-8", errors="replace").strip()
-            return {"success": proc.returncode == 0, "output": out if out else err, "error": None if proc.returncode == 0 else err, "exit_code": proc.returncode}
+            return {
+                "success": proc.returncode == 0,
+                "output": out if out else err,
+                "error": None if proc.returncode == 0 else err,
+                "exit_code": proc.returncode,
+            }
         except Exception as e:
             return {"success": False, "output": "", "error": str(e), "exit_code": -1}

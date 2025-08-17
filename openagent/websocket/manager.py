@@ -7,12 +7,12 @@ Manages active connections, rooms, and broadcasting for real-time communication.
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Optional, Set, Callable, Any, List
 from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .models import ConnectionInfo, Room, WebSocketMessage, MessageType
+from .models import ConnectionInfo, MessageType, Room, WebSocketMessage
 
 
 @dataclass
@@ -39,10 +39,16 @@ class WebSocketManager:
             self._clients[info.connection_id] = Client(websocket=websocket, info=info)
             self._subscriptions.setdefault(info.connection_id, set())
         # Send connected ack
-        await self.send_message(info.connection_id, WebSocketMessage(type=MessageType.CONNECT, data={
-            "connection_id": info.connection_id,
-            "status": info.status.value,
-        }))
+        await self.send_message(
+            info.connection_id,
+            WebSocketMessage(
+                type=MessageType.CONNECT,
+                data={
+                    "connection_id": info.connection_id,
+                    "status": info.status.value,
+                },
+            ),
+        )
         return info.connection_id
 
     async def disconnect(self, connection_id: str) -> None:
@@ -70,7 +76,9 @@ class WebSocketManager:
     async def send_message(self, connection_id: str, message: WebSocketMessage) -> None:
         await self.send_text(connection_id, message.to_json())
 
-    async def broadcast_message(self, message: WebSocketMessage, room_id: Optional[str] = None) -> None:
+    async def broadcast_message(
+        self, message: WebSocketMessage, room_id: Optional[str] = None
+    ) -> None:
         if room_id:
             targets = self._get_room_members(room_id)
         else:
@@ -84,8 +92,19 @@ class WebSocketManager:
             return []
         return list(room.participants)
 
-    async def create_room(self, name: str, description: str = "", shared_agent: str = "default", max_participants: int = 10) -> Room:
-        room = Room(name=name, description=description, shared_agent=shared_agent, max_participants=max_participants)
+    async def create_room(
+        self,
+        name: str,
+        description: str = "",
+        shared_agent: str = "default",
+        max_participants: int = 10,
+    ) -> Room:
+        room = Room(
+            name=name,
+            description=description,
+            shared_agent=shared_agent,
+            max_participants=max_participants,
+        )
         async with self._lock:
             self._rooms[room.room_id] = room
         return room

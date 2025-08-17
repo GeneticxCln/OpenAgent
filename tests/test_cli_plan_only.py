@@ -1,4 +1,5 @@
 import json
+
 import pytest
 from typer.testing import CliRunner
 
@@ -11,15 +12,20 @@ def _invoke_do(task: str, monkeypatch):
     # Stub create_agent to avoid loading real models or background tasks
     class _Stub:
         llm = None
+
     monkeypatch.setattr("openagent.cli.create_agent", lambda *args, **kwargs: _Stub())
 
     # Force heuristic fallback in planner by making intent UNKNOWN
-    from openagent.core.tool_selector import ToolIntent, SmartToolSelector
+    from openagent.core.tool_selector import SmartToolSelector, ToolIntent
+
     async def _fake_analyze(*args, **kwargs):
         return ToolIntent.UNKNOWN
-    monkeypatch.setattr(SmartToolSelector, 'analyze_intent', _fake_analyze)
 
-    result = runner.invoke(app, ["do", task, "--plan-only", "--auto-execute"], catch_exceptions=False)
+    monkeypatch.setattr(SmartToolSelector, "analyze_intent", _fake_analyze)
+
+    result = runner.invoke(
+        app, ["do", task, "--plan-only", "--auto-execute"], catch_exceptions=False
+    )
     assert result.exit_code == 0, f"CLI exited with {result.exit_code}: {result.output}"
     # Output should be JSON
     data = json.loads(result.stdout.strip())
@@ -55,4 +61,3 @@ def test_cli_plan_only_search_and_overview(monkeypatch):
 
     grep_calls = [c for c in calls if c["tool_name"] == "repo_grep"]
     assert any(c.get("parameters", {}).get("pattern") for c in grep_calls)
-

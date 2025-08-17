@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+
 from openagent.server.app import app
 
 
@@ -15,4 +16,3 @@ def test_sse_streaming_basic():
             assert "event: start" in joined
             assert "data:" in joined
             assert "event: end" in joined
-

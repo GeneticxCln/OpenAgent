@@ -9,6 +9,6 @@ from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 
 __all__ = [
     "CommandExecutor",
-    "FileManager", 
+    "FileManager",
     "SystemInfo",
 ]

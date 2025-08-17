@@ -12,7 +12,7 @@ def zsh_integration_snippet() -> str:
     - Confirmation: prompt to approve risky/warned commands with a single key (y).
     - Env toggles: OPENAGENT_EXPLAIN=1, OPENAGENT_WARN=1, OPENAGENT_CONFIRM=1.
     """
-    return r'''
+    return r"""
 # --- OpenAgent zsh integration start ---
 # Enable features in your ~/.zshrc:
 #   export OPENAGENT_EXPLAIN=1       # Show short explanation
@@ -115,7 +115,7 @@ if [[ -n "$ZSH_VERSION" && -o interactive && $+functions[zle] -gt 0 ]]; then
   bindkey '^G' _openagent_explain_buffer
 fi
 # --- OpenAgent zsh integration end ---
-'''
+"""
 
 
 def bash_integration_snippet() -> str:
@@ -124,7 +124,7 @@ def bash_integration_snippet() -> str:
     Note: Bash integration is more limited than zsh; we provide warn/explain
     and confirmation modes. Risky blocking is simulated by returning non-zero.
     """
-    return r'''
+    return r"""
 # --- OpenAgent bash integration start ---
 # export OPENAGENT_EXPLAIN=1
 # export OPENAGENT_WARN=1
@@ -181,10 +181,12 @@ if _openagent_is_interactive; then
   esac
 fi
 # --- OpenAgent bash integration end ---
-'''
+"""
 
 
-def install_snippet(shell: Literal["zsh", "bash"], apply: bool = False) -> tuple[Path, str]:
+def install_snippet(
+    shell: Literal["zsh", "bash"], apply: bool = False
+) -> tuple[Path, str]:
     """Return (path, snippet). If apply=True, append to shell rc file."""
     if shell == "zsh":
         snippet = zsh_integration_snippet()
@@ -204,6 +206,7 @@ def install_snippet(shell: Literal["zsh", "bash"], apply: bool = False) -> tuple
         if marker_start in text and marker_end in text:
             # already installed; replace existing block
             import re
+
             new_text = re.sub(
                 rf"{marker_start}[\s\S]*?{marker_end}",
                 snippet.strip(),
@@ -211,6 +214,8 @@ def install_snippet(shell: Literal["zsh", "bash"], apply: bool = False) -> tuple
                 count=1,
             )
         else:
-            new_text = text + ("\n\n" if text and not text.endswith("\n") else "") + snippet
+            new_text = (
+                text + ("\n\n" if text and not text.endswith("\n") else "") + snippet
+            )
         rc_path.write_text(new_text)
     return rc_path, snippet

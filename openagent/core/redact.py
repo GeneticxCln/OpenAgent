@@ -1,18 +1,26 @@
 """
 Redaction utilities to remove secrets from exported content.
 """
+
 from __future__ import annotations
 
 import os
 import re
-from typing import Dict
 from pathlib import Path
+from typing import Dict
 
 from dotenv import dotenv_values
 
 COMMON_SECRET_KEYS = {
-    "API_KEY", "API_TOKEN", "SECRET", "PASSWORD", "PASS", "TOKEN",
-    "OPENAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_TOKEN",
+    "API_KEY",
+    "API_TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "PASS",
+    "TOKEN",
+    "OPENAI_API_KEY",
+    "HF_TOKEN",
+    "HUGGINGFACE_TOKEN",
 }
 
 # Simple patterns for common token formats (best-effort)

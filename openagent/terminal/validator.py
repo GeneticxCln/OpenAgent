@@ -1,17 +1,37 @@
 import shlex
-import yaml
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import yaml
+
 DEFAULT_POLICY = {
     "risky_patterns": [
-        "rm -rf", "rm -r", "mkfs", "fdisk", "dd ", "chmod 777", "chmod -R 777", "chown ", "killall", "sudo rm", "rm /", "rm -rf /"
+        "rm -rf",
+        "rm -r",
+        "mkfs",
+        "fdisk",
+        "dd ",
+        "chmod 777",
+        "chmod -R 777",
+        "chown ",
+        "killall",
+        "sudo rm",
+        "rm /",
+        "rm -rf /",
     ],
     "allowlist": {
         # command: allowed flags (prefix match), empty list means no restriction on flags
         "ls": ["-l", "-a", "-h", "-la", "--all", "--human-readable"],
         "grep": ["-i", "-r", "-n", "-E", "--color", "--include", "--exclude"],
-        "find": ["-name", "-type", "-maxdepth", "-mindepth", "-mtime", "-size", "-exec"],
+        "find": [
+            "-name",
+            "-type",
+            "-maxdepth",
+            "-mindepth",
+            "-mtime",
+            "-size",
+            "-exec",
+        ],
         "cat": [],
         "echo": [],
         "pwd": [],
@@ -20,13 +40,44 @@ DEFAULT_POLICY = {
         "env": [],
         "python": [],
         "pip": ["install", "list", "show"],
-        "git": ["status", "log", "diff", "show", "add", "commit", "push", "pull", "fetch", "checkout", "switch", "rebase"],
-        "docker": ["ps", "images", "pull", "run", "logs", "exec", "stop", "start", "compose"],
+        "git": [
+            "status",
+            "log",
+            "diff",
+            "show",
+            "add",
+            "commit",
+            "push",
+            "pull",
+            "fetch",
+            "checkout",
+            "switch",
+            "rebase",
+        ],
+        "docker": [
+            "ps",
+            "images",
+            "pull",
+            "run",
+            "logs",
+            "exec",
+            "stop",
+            "start",
+            "compose",
+        ],
         "docker-compose": ["up", "down", "logs", "ps", "pull", "build"],
         "pacman": ["-S", "-Ss", "-Qi", "-Qs", "-Sy", "-Syu"],
         "paru": ["-S", "-Ss", "-Qi", "-Qs", "-Sy", "-Syu"],
         "yay": ["-S", "-Ss", "-Qi", "-Qs", "-Sy", "-Syu"],
-        "systemctl": ["status", "start", "stop", "restart", "enable", "disable", "--user"],
+        "systemctl": [
+            "status",
+            "start",
+            "stop",
+            "restart",
+            "enable",
+            "disable",
+            "--user",
+        ],
         "journalctl": ["-u", "-xe", "-f"],
         "npm": ["install", "ci", "run", "start", "test", "build"],
         "yarn": ["install", "run", "start", "test", "build"],
@@ -38,7 +89,7 @@ DEFAULT_POLICY = {
         "curl": ["-I", "-s", "-L", "--head", "--silent"],
         "make": ["build", "test", "install"],
     },
-    "default_decision": "block"  # allow | warn | block
+    "default_decision": "block",  # allow | warn | block
 }
 
 CONFIG_PATH = Path.home() / ".config" / "openagent" / "policy.yaml"
@@ -110,4 +161,7 @@ def validate(cmdline: str) -> Tuple[str, str]:
     if not flags_allowed(cmd, args, policy):
         return "warn", "flags not in allowlist"
 
-    return policy.get("default_decision", DEFAULT_POLICY["default_decision"]), "policy default"
+    return (
+        policy.get("default_decision", DEFAULT_POLICY["default_decision"]),
+        "policy default",
+    )

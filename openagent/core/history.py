@@ -4,13 +4,14 @@ History management for OpenAgent.
 Provides persistent storage of interaction blocks (request, plan, tool results, response)
 similar to Warp's command blocks. Stores JSONL files under ~/.openagent/history/.
 """
+
 from __future__ import annotations
 
-import os
 import json
-import uuid
+import os
 import time
-from dataclasses import dataclass, asdict, field
+import uuid
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -102,23 +103,23 @@ class HistoryManager:
 
     def export(self, block_id: str, format: str = "json") -> str:
         """Export a history block in specified format.
-        
+
         Args:
             block_id: ID of the block to export
             format: Export format ('json' or 'md')
-            
+
         Returns:
             Exported content as a string
         """
         block_data = self.get(block_id)
         if not block_data:
             raise ValueError(f"Block {block_id} not found")
-        
+
         if format == "json":
             return json.dumps(block_data, indent=2, ensure_ascii=False)
         elif format == "md":
             # Markdown export
-            model_info = block_data.get('model') or {}
+            model_info = block_data.get("model") or {}
             md = f"""# Block {block_data['id']}
 
 - Time: {block_data.get('timestamp', 'Unknown')}
@@ -133,12 +134,16 @@ class HistoryManager:
 ## Tool Results
 
 """
-            for tr in block_data.get('tool_results', []):
-                success_str = 'Success' if tr.get('success') else 'Failed'
+            for tr in block_data.get("tool_results", []):
+                success_str = "Success" if tr.get("success") else "Failed"
                 md += f"- {tr.get('tool', 'Unknown')}: {success_str}\n"
-                if tr.get('content'):
-                    md += f"  - Content: {tr['content'][:100]}...\n" if len(tr.get('content', '')) > 100 else f"  - Content: {tr['content']}\n"
-            
+                if tr.get("content"):
+                    md += (
+                        f"  - Content: {tr['content'][:100]}...\n"
+                        if len(tr.get("content", "")) > 100
+                        else f"  - Content: {tr['content']}\n"
+                    )
+
             md += f"""
 ## Response
 
@@ -149,10 +154,14 @@ class HistoryManager:
             raise ValueError(f"Unsupported export format: {format}")
 
     @staticmethod
-    def new_block(input_text: str, response: str, plan: Optional[Dict[str, Any]] = None,
-                  tool_results: Optional[List[Dict[str, Any]]] = None,
-                  model: Optional[Dict[str, Any]] = None,
-                  context: Optional[Dict[str, Any]] = None) -> Block:
+    def new_block(
+        input_text: str,
+        response: str,
+        plan: Optional[Dict[str, Any]] = None,
+        tool_results: Optional[List[Dict[str, Any]]] = None,
+        model: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Block:
         return Block(
             id=str(uuid.uuid4())[:8],
             timestamp=_now_iso(),

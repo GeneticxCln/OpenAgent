@@ -8,7 +8,7 @@ AI agents with tool integration, multi-agent coordination, and extensible archit
 from openagent.core.agent import Agent
 from openagent.core.base import BaseAgent, BaseTool
 from openagent.core.config import Config
-from openagent.core.exceptions import OpenAgentError, ToolError, AgentError
+from openagent.core.exceptions import AgentError, OpenAgentError, ToolError
 
 __version__ = "0.1.3"
 __author__ = "Your Name"
@@ -22,7 +22,7 @@ __all__ = [
     "BaseTool",
     "Config",
     "OpenAgentError",
-    "ToolError", 
+    "ToolError",
     "AgentError",
 ]
 

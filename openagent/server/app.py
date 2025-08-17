@@ -6,32 +6,41 @@ rate limiting, and comprehensive error handling.
 """
 
 import asyncio
+import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
-from fastapi.responses import StreamingResponse
+import uvicorn
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-import uvicorn
-import json
 
 from openagent.core.agent import Agent
 from openagent.core.exceptions import AgentError, ToolError
-from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 from openagent.server.auth import AuthManager
-from openagent.server.rate_limiter import RateLimiter
 from openagent.server.models import (
-    ChatRequest, ChatResponse, AgentStatus, ModelInfo,
-    CodeRequest, CodeResponse, AnalysisRequest, AnalysisResponse,
-    SystemInfoResponse, ErrorResponse, User, LoginRequest, LoginResponse
+    AgentStatus,
+    AnalysisRequest,
+    AnalysisResponse,
+    ChatRequest,
+    ChatResponse,
+    CodeRequest,
+    CodeResponse,
+    ErrorResponse,
+    LoginRequest,
+    LoginResponse,
+    ModelInfo,
+    SystemInfoResponse,
+    User,
 )
+from openagent.server.rate_limiter import RateLimiter
+from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +53,7 @@ from openagent.core.observability import (
     get_metrics_collector,
     get_request_tracker,
 )
+
 obs_logger = get_logger(__name__)
 metrics = get_metrics_collector()
 tracker = get_request_tracker()
@@ -66,9 +76,10 @@ async def lifespan(app: FastAPI):
         obs_logger.info("Server starting", metadata={"event": "startup"})
     except Exception:
         pass
-    
+
     # Initialize default agent (local-only)
     import os
+
     def _default_model():
         # Prefer Ollama local model if available; otherwise tiny-llama
         dm = os.getenv("DEFAULT_MODEL")
@@ -80,7 +91,9 @@ async def lifespan(app: FastAPI):
         # Try Ollama auto-pick
         try:
             import asyncio as _asyncio
+
             from openagent.core.llm_ollama import get_default_ollama_model
+
             m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
             if m:
                 return f"ollama:{m}"
@@ -92,18 +105,18 @@ async def lifespan(app: FastAPI):
         name="WebAgent",
         description="OpenAgent web interface assistant",
         model_name=_default_model(),
-        tools=[CommandExecutor(), FileManager(), SystemInfo()]
+        tools=[CommandExecutor(), FileManager(), SystemInfo()],
     )
     agents["default"] = default_agent
-    
+
     logger.info("OpenAgent server started successfully")
     try:
         obs_logger.info("Server started", metadata={"event": "startup_complete"})
     except Exception:
         pass
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down OpenAgent server...")
     try:
@@ -111,7 +124,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     for agent in agents.values():
-        if hasattr(agent, 'llm') and agent.llm:
+        if hasattr(agent, "llm") and agent.llm:
             await agent.llm.unload_model()
     agents.clear()
     logger.info("OpenAgent server shut down")
@@ -128,7 +141,7 @@ app = FastAPI(
     version="0.1.3",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add middleware
@@ -142,12 +155,14 @@ app.add_middleware(
 
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["localhost", "127.0.0.1", "*.localhost", "testserver"]
+    allowed_hosts=["localhost", "127.0.0.1", "*.localhost", "testserver"],
 )
 
-# Request ID and metrics middleware
-from fastapi.responses import Response, PlainTextResponse
 import uuid as _uuid
+
+# Request ID and metrics middleware
+from fastapi.responses import PlainTextResponse, Response
+
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
@@ -168,7 +183,11 @@ async def request_context_middleware(request: Request, call_next):
         status = response.status_code
     except Exception as e:
         status = 500
-        obs_logger.error("Unhandled exception during request", error=e, metadata={"path": path, "method": method})
+        obs_logger.error(
+            "Unhandled exception during request",
+            error=e,
+            metadata={"path": path, "method": method},
+        )
         raise
     finally:
         duration = time.time() - start
@@ -184,16 +203,26 @@ async def request_context_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
+
 # WebSocket support
 from fastapi import WebSocket, WebSocketDisconnect
-from openagent.websocket import WebSocketManager, WebSocketHandler, WebSocketMessage, MessageType, ConnectionInfo
+
+from openagent.websocket import (
+    ConnectionInfo,
+    MessageType,
+    WebSocketHandler,
+    WebSocketManager,
+    WebSocketMessage,
+)
 
 ws_manager = WebSocketManager()
 
 # Helper to lookup agents for handler
 
+
 def _lookup_agent(name: str):
     return agents.get(name)
+
 
 # Optional auth: use existing auth_manager if tokens are enabled
 async def _verify_token(token: str):
@@ -203,11 +232,13 @@ async def _verify_token(token: str):
     except Exception:
         return None
 
+
 ws_handler = WebSocketHandler(
     send=lambda cid, msg: ws_manager.send_message(cid, msg),
     lookup_agent=_lookup_agent,
     authenticate_token=_verify_token,
 )
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
@@ -228,26 +259,44 @@ async def websocket_endpoint(ws: WebSocket):
                 payload = json.loads(raw_text)
             except Exception:
                 payload = None
-            if isinstance(payload, dict) and 'message' in payload and ('agent' not in payload or payload.get('agent') in agents):
-                agent_name = payload.get('agent') or 'default'
+            if (
+                isinstance(payload, dict)
+                and "message" in payload
+                and ("agent" not in payload or payload.get("agent") in agents)
+            ):
+                agent_name = payload.get("agent") or "default"
                 if agent_name not in agents:
-                    await ws.send_text(json.dumps({"type": "error", "error": f"Agent '{agent_name}' not found"}))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "error": f"Agent '{agent_name}' not found",
+                            }
+                        )
+                    )
                     continue
                 # Start event (optional)
                 await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+
                 # Implement inline streaming using shared generator
                 async def _stream_tokens_sse(agent_obj, message: str):
-                    llm = getattr(agent_obj, 'llm', None)
+                    llm = getattr(agent_obj, "llm", None)
                     # True streaming via agent or provider
                     try:
-                        if hasattr(agent_obj, 'stream_message') and callable(getattr(agent_obj, 'stream_message')):
+                        if hasattr(agent_obj, "stream_message") and callable(
+                            getattr(agent_obj, "stream_message")
+                        ):
                             async for token in agent_obj.stream_message(message):
                                 yield token
                             return
                     except Exception:
                         pass
                     try:
-                        if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+                        if (
+                            llm is not None
+                            and hasattr(llm, "stream_generate")
+                            and callable(getattr(llm, "stream_generate"))
+                        ):
                             async for token in llm.stream_generate(message):
                                 yield token
                             return
@@ -255,19 +304,27 @@ async def websocket_endpoint(ws: WebSocket):
                         pass
                     # No streaming available; yield full once
                     resp = await agent_obj.process_message(message)
-                    content = resp.content if hasattr(resp, 'content') else str(resp)
+                    content = resp.content if hasattr(resp, "content") else str(resp)
                     yield content
-                async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
+
+                async for chunk in _stream_tokens_sse(
+                    agents[agent_name], payload["message"]
+                ):
                     await ws.send_text(json.dumps({"content": chunk}))
                 await ws.send_text(json.dumps({"event": "end"}))
                 continue
             # Otherwise, delegate to generic handler for backward-compatible protocols
-            await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
+            await ws_handler.handle(
+                connection_id, ws_manager.get_client(connection_id).info, raw_text
+            )
     except WebSocketDisconnect:
         pass
     except Exception as e:
         try:
-            await ws_manager.send_message(connection_id, WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}))
+            await ws_manager.send_message(
+                connection_id,
+                WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}),
+            )
         except Exception:
             pass
     finally:
@@ -322,24 +379,42 @@ async def websocket_chat(ws: WebSocket):
                 payload = json.loads(raw_text)
             except Exception:
                 payload = None
-            if isinstance(payload, dict) and 'message' in payload and ('agent' not in payload or payload.get('agent') in agents):
-                agent_name = payload.get('agent') or 'default'
+            if (
+                isinstance(payload, dict)
+                and "message" in payload
+                and ("agent" not in payload or payload.get("agent") in agents)
+            ):
+                agent_name = payload.get("agent") or "default"
                 if agent_name not in agents:
-                    await ws.send_text(json.dumps({"type": "error", "error": f"Agent '{agent_name}' not found"}))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "error": f"Agent '{agent_name}' not found",
+                            }
+                        )
+                    )
                     continue
                 await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+
                 # Inline streaming similar to SSE path
                 async def _stream_tokens_sse(agent_obj, message: str):
-                    llm = getattr(agent_obj, 'llm', None)
+                    llm = getattr(agent_obj, "llm", None)
                     try:
-                        if hasattr(agent_obj, 'stream_message') and callable(getattr(agent_obj, 'stream_message')):
+                        if hasattr(agent_obj, "stream_message") and callable(
+                            getattr(agent_obj, "stream_message")
+                        ):
                             async for token in agent_obj.stream_message(message):
                                 yield token
                             return
                     except Exception:
                         pass
                     try:
-                        if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+                        if (
+                            llm is not None
+                            and hasattr(llm, "stream_generate")
+                            and callable(getattr(llm, "stream_generate"))
+                        ):
                             async for token in llm.stream_generate(message):
                                 yield token
                             return
@@ -347,18 +422,26 @@ async def websocket_chat(ws: WebSocket):
                         pass
                     # No streaming: yield full once
                     resp = await agent_obj.process_message(message)
-                    content = resp.content if hasattr(resp, 'content') else str(resp)
+                    content = resp.content if hasattr(resp, "content") else str(resp)
                     yield content
-                async for chunk in _stream_tokens_sse(agents[agent_name], payload['message']):
+
+                async for chunk in _stream_tokens_sse(
+                    agents[agent_name], payload["message"]
+                ):
                     await ws.send_text(json.dumps({"content": chunk}))
                 await ws.send_text(json.dumps({"event": "end"}))
                 continue
-            await ws_handler.handle(connection_id, ws_manager.get_client(connection_id).info, raw_text)
+            await ws_handler.handle(
+                connection_id, ws_manager.get_client(connection_id).info, raw_text
+            )
     except WebSocketDisconnect:
         pass
     except Exception as e:
         try:
-            await ws_manager.send_message(connection_id, WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}))
+            await ws_manager.send_message(
+                connection_id,
+                WebSocketMessage(type=MessageType.ERROR, data={"error": str(e)}),
+            )
         except Exception:
             pass
     finally:
@@ -367,7 +450,7 @@ async def websocket_chat(ws: WebSocket):
 
 # Authentication dependency
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> Optional[User]:
     """Get current authenticated user."""
     if not credentials or not credentials.credentials:
@@ -396,7 +479,9 @@ async def get_current_user(
 
 
 # Rate limiting dependency
-async def check_rate_limit(request: Request, user: Optional[User] = Depends(get_current_user)):
+async def check_rate_limit(
+    request: Request, user: Optional[User] = Depends(get_current_user)
+):
     """Check rate limits for the request."""
     user_id = user.id if user else None
     await rate_limiter.check_request(request, user_id)
@@ -411,8 +496,8 @@ async def agent_error_handler(request: Request, exc: AgentError):
         content=ErrorResponse(
             error="agent_error",
             message=str(exc),
-timestamp=datetime.now(timezone.utc).isoformat()
-        ).dict()
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ).dict(),
     )
 
 
@@ -422,10 +507,10 @@ async def tool_error_handler(request: Request, exc: ToolError):
     return JSONResponse(
         status_code=400,
         content=ErrorResponse(
-            error="tool_error", 
+            error="tool_error",
             message=str(exc),
-timestamp=datetime.now(timezone.utc).isoformat()
-        ).dict()
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        ).dict(),
     )
 
 
@@ -437,8 +522,9 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.3",
-        "agents": len(agents)
+        "agents": len(agents),
     }
+
 
 @app.get("/healthz")
 async def healthz():
@@ -446,8 +532,9 @@ async def healthz():
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.3",
-        "agents": len(agents)
+        "agents": len(agents),
     }
+
 
 @app.get("/readyz")
 async def readyz():
@@ -457,8 +544,9 @@ async def readyz():
         "status": "ok" if ready else "starting",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.3",
-        "agents": len(agents)
+        "agents": len(agents),
     }
+
 
 # Metrics endpoint
 @app.get("/metrics")
@@ -468,6 +556,7 @@ async def metrics_endpoint():
     content_type = "text/plain; version=0.0.4; charset=utf-8"
     try:
         from prometheus_client import CONTENT_TYPE_LATEST as _CTL
+
         content_type = _CTL
     except Exception:
         pass
@@ -486,7 +575,7 @@ async def login(request: LoginRequest) -> LoginResponse:
         access_token=token,
         token_type="bearer",
         user=user,
-        expires_in=auth_manager.config.access_token_expire_minutes * 60
+        expires_in=auth_manager.config.access_token_expire_minutes * 60,
     )
 
 
@@ -496,46 +585,46 @@ async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Process a chat message with the agent."""
     agent_name = request.agent or "default"
-    
+
     if agent_name not in agents:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_name}' not found"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
     agent = agents[agent_name]
-    
+
     try:
         # Process message
         start_time = time.time()
         response = await agent.process_message(request.message)
         processing_time = time.time() - start_time
-        
+
         # Log usage
         if user:
             try:
                 obs_logger.set_context(user_id=user.id)
-                obs_logger.info("Chat handled", metadata={"agent": agent_name, "processing_time": processing_time})
+                obs_logger.info(
+                    "Chat handled",
+                    metadata={"agent": agent_name, "processing_time": processing_time},
+                )
             except Exception:
                 pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
                 "chat",
-                {"agent": agent_name, "processing_time": processing_time}
+                {"agent": agent_name, "processing_time": processing_time},
             )
-        
+
         return ChatResponse(
             message=response.content,
             metadata=response.metadata,
             processing_time=processing_time,
-            agent=agent_name
+            agent=agent_name,
         )
-        
+
     except Exception as e:
         logger.error(f"Chat error: {e}")
         try:
@@ -543,8 +632,7 @@ async def chat(
         except Exception:
             pass
         raise HTTPException(
-            status_code=500,
-            detail=f"Error processing message: {str(e)}"
+            status_code=500, detail=f"Error processing message: {str(e)}"
         )
 
 
@@ -552,7 +640,7 @@ async def chat(
 async def chat_stream(
     request: ChatRequest,
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Stream a chat response using Server-Sent Events (SSE).
     Attempts real incremental streaming if supported by the model, otherwise
@@ -566,16 +654,22 @@ async def chat_stream(
 
     async def _stream_tokens(message: str):
         # Try agent/LLM-native streaming if available
-        llm = getattr(agent, 'llm', None)
+        llm = getattr(agent, "llm", None)
         try:
-            if hasattr(agent, 'stream_message') and callable(getattr(agent, 'stream_message')):
+            if hasattr(agent, "stream_message") and callable(
+                getattr(agent, "stream_message")
+            ):
                 async for token in agent.stream_message(message):
                     yield token
                 return
         except Exception:
             pass
         try:
-            if llm is not None and hasattr(llm, 'stream_generate') and callable(getattr(llm, 'stream_generate')):
+            if (
+                llm is not None
+                and hasattr(llm, "stream_generate")
+                and callable(getattr(llm, "stream_generate"))
+            ):
                 async for token in llm.stream_generate(message):
                     yield token
                 return
@@ -583,7 +677,7 @@ async def chat_stream(
             pass
         # No streaming available: yield full once
         resp = await agent.process_message(message)
-        content = resp.content if hasattr(resp, 'content') else str(resp)
+        content = resp.content if hasattr(resp, "content") else str(resp)
         yield content
 
     async def event_generator():
@@ -600,7 +694,9 @@ async def chat_stream(
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
+    return StreamingResponse(
+        event_generator(), media_type="text/event-stream", headers=headers
+    )
 
 
 # Code generation endpoints
@@ -609,160 +705,153 @@ async def generate_code(
     request: CodeRequest,
     background_tasks: BackgroundTasks,
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Generate code based on description."""
     agent_name = request.agent or "default"
-    
+
     if agent_name not in agents:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_name}' not found"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
     agent = agents[agent_name]
-    
+
     try:
         start_time = time.time()
-        code = await agent.llm.generate_code(
-            request.description,
-            request.language
-        )
+        code = await agent.llm.generate_code(request.description, request.language)
         processing_time = time.time() - start_time
-        
+
         # Log usage
         if user:
             try:
                 obs_logger.set_context(user_id=user.id)
-                obs_logger.info("Code generated", metadata={"language": request.language, "processing_time": processing_time})
+                obs_logger.info(
+                    "Code generated",
+                    metadata={
+                        "language": request.language,
+                        "processing_time": processing_time,
+                    },
+                )
             except Exception:
                 pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
                 "code_generation",
-                {"language": request.language, "processing_time": processing_time}
+                {"language": request.language, "processing_time": processing_time},
             )
-        
+
         return CodeResponse(
             code=code,
             language=request.language,
             description=request.description,
-            processing_time=processing_time
+            processing_time=processing_time,
         )
-        
+
     except Exception as e:
         logger.error(f"Code generation error: {e}")
         try:
-            obs_logger.error("Code generation error", error=e, metadata={"language": request.language})
+            obs_logger.error(
+                "Code generation error",
+                error=e,
+                metadata={"language": request.language},
+            )
         except Exception:
             pass
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error generating code: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error generating code: {str(e)}")
 
 
-@app.post("/code/analyze", response_model=AnalysisResponse) 
+@app.post("/code/analyze", response_model=AnalysisResponse)
 async def analyze_code(
     request: AnalysisRequest,
     background_tasks: BackgroundTasks,
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Analyze code and provide insights."""
     agent_name = request.agent or "default"
-    
+
     if agent_name not in agents:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_name}' not found"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
     agent = agents[agent_name]
-    
+
     try:
         start_time = time.time()
-        analysis = await agent.llm.analyze_code(
-            request.code,
-            request.language
-        )
+        analysis = await agent.llm.analyze_code(request.code, request.language)
         processing_time = time.time() - start_time
-        
+
         # Log usage
         if user:
             try:
                 obs_logger.set_context(user_id=user.id)
-                obs_logger.info("Code analyzed", metadata={"language": request.language, "processing_time": processing_time})
+                obs_logger.info(
+                    "Code analyzed",
+                    metadata={
+                        "language": request.language,
+                        "processing_time": processing_time,
+                    },
+                )
             except Exception:
                 pass
             background_tasks.add_task(
                 log_usage,
                 user.id,
-                "code_analysis", 
-                {"language": request.language, "processing_time": processing_time}
+                "code_analysis",
+                {"language": request.language, "processing_time": processing_time},
             )
-        
+
         return AnalysisResponse(
             analysis=analysis,
             language=request.language,
-            processing_time=processing_time
+            processing_time=processing_time,
         )
-        
+
     except Exception as e:
         logger.error(f"Code analysis error: {e}")
         try:
-            obs_logger.error("Code analysis error", error=e, metadata={"language": request.language})
+            obs_logger.error(
+                "Code analysis error", error=e, metadata={"language": request.language}
+            )
         except Exception:
             pass
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error analyzing code: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Error analyzing code: {str(e)}")
 
 
 # System endpoints
 @app.get("/system/info", response_model=SystemInfoResponse)
 async def get_system_info(
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Get system information."""
     # RBAC: if auth is enabled, require 'admin' role for system info
     try:
         if auth_manager.config.auth_enabled:
-            if not user or ('admin' not in (user.roles or [])):
-                raise HTTPException(status_code=403, detail="Forbidden: admin role required")
+            if not user or ("admin" not in (user.roles or [])):
+                raise HTTPException(
+                    status_code=403, detail="Forbidden: admin role required"
+                )
     except Exception:
         pass
     if "default" not in agents:
-        raise HTTPException(
-            status_code=500,
-            detail="Default agent not available"
-        )
-    
+        raise HTTPException(status_code=500, detail="Default agent not available")
+
     agent = agents["default"]
     system_tool = None
-    
+
     # Find system info tool
     for tool in agent.tools:
         if tool.name == "system_info":
             system_tool = tool
             break
-    
+
     if not system_tool:
-        raise HTTPException(
-            status_code=500,
-            detail="System info tool not available"
-        )
-    
+        raise HTTPException(status_code=500, detail="System info tool not available")
+
     try:
         result = await system_tool.execute("overview")
-        return SystemInfoResponse(
-            content=result.content,
-            metadata=result.metadata
-        )
-        
+        return SystemInfoResponse(content=result.content, metadata=result.metadata)
+
     except Exception as e:
         logger.error(f"System info error: {e}")
         try:
@@ -770,58 +859,57 @@ async def get_system_info(
         except Exception:
             pass
         raise HTTPException(
-            status_code=500,
-            detail=f"Error getting system info: {str(e)}"
+            status_code=500, detail=f"Error getting system info: {str(e)}"
         )
 
 
 # Agent management endpoints
 @app.get("/agents", response_model=List[AgentStatus])
-async def list_agents(
-    user: Optional[User] = Depends(get_current_user)
-):
+async def list_agents(user: Optional[User] = Depends(get_current_user)):
     """List all available agents."""
     agent_list = []
-    
+
     for name, agent in agents.items():
         status = agent.get_status()
-        model_info = agent.llm.get_model_info() if hasattr(agent, 'llm') and agent.llm else {}
-        
-        agent_list.append(AgentStatus(
-            name=name,
-            description=status["description"],
-            model=model_info.get("model_name", "unknown"),
-            is_processing=status["is_processing"],
-            tools=status["tools"],
-            message_count=status["message_history_length"]
-        ))
-    
+        model_info = (
+            agent.llm.get_model_info() if hasattr(agent, "llm") and agent.llm else {}
+        )
+
+        agent_list.append(
+            AgentStatus(
+                name=name,
+                description=status["description"],
+                model=model_info.get("model_name", "unknown"),
+                is_processing=status["is_processing"],
+                tools=status["tools"],
+                message_count=status["message_history_length"],
+            )
+        )
+
     return agent_list
 
 
 @app.get("/agents/{agent_name}/status", response_model=AgentStatus)
 async def get_agent_status(
-    agent_name: str,
-    user: Optional[User] = Depends(get_current_user)
+    agent_name: str, user: Optional[User] = Depends(get_current_user)
 ):
     """Get status of a specific agent."""
     if agent_name not in agents:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_name}' not found"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
     agent = agents[agent_name]
     status = agent.get_status()
-    model_info = agent.llm.get_model_info() if hasattr(agent, 'llm') and agent.llm else {}
-    
+    model_info = (
+        agent.llm.get_model_info() if hasattr(agent, "llm") and agent.llm else {}
+    )
+
     return AgentStatus(
         name=agent_name,
         description=status["description"],
         model=model_info.get("model_name", "unknown"),
         is_processing=status["is_processing"],
         tools=status["tools"],
-        message_count=status["message_history_length"]
+        message_count=status["message_history_length"],
     )
 
 
@@ -829,58 +917,56 @@ async def get_agent_status(
 async def reset_agent(
     agent_name: str,
     user: Optional[User] = Depends(get_current_user),
-    _rate_limit: None = Depends(check_rate_limit)
+    _rate_limit: None = Depends(check_rate_limit),
 ):
     """Reset an agent's conversation history."""
     if agent_name not in agents:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent '{agent_name}' not found"
-        )
-    
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
     agent = agents[agent_name]
     agent.reset()
-    
+
     return {"message": f"Agent '{agent_name}' has been reset"}
 
 
 # Models endpoint
 @app.get("/models", response_model=List[ModelInfo])
-async def list_models(
-    user: Optional[User] = Depends(get_current_user)
-):
+async def list_models(user: Optional[User] = Depends(get_current_user)):
     """List all available models."""
     from openagent.core.llm import ModelConfig
-    
+
     models = []
-    
+
     # Add code models
     for name, path in ModelConfig.CODE_MODELS.items():
-        models.append(ModelInfo(
-            name=name,
-            path=path,
-            category="code",
-            description=f"Code-focused model: {name}"
-        ))
-    
+        models.append(
+            ModelInfo(
+                name=name,
+                path=path,
+                category="code",
+                description=f"Code-focused model: {name}",
+            )
+        )
+
     # Add chat models
     for name, path in ModelConfig.CHAT_MODELS.items():
-        models.append(ModelInfo(
-            name=name,
-            path=path,
-            category="chat",
-            description=f"Chat model: {name}"
-        ))
-    
+        models.append(
+            ModelInfo(
+                name=name, path=path, category="chat", description=f"Chat model: {name}"
+            )
+        )
+
     # Add lightweight models
     for name, path in ModelConfig.LIGHTWEIGHT_MODELS.items():
-        models.append(ModelInfo(
-            name=name,
-            path=path,
-            category="lightweight",
-            description=f"Lightweight model: {name}"
-        ))
-    
+        models.append(
+            ModelInfo(
+                name=name,
+                path=path,
+                category="lightweight",
+                description=f"Lightweight model: {name}",
+            )
+        )
+
     return models
 
 
@@ -903,5 +989,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
     )

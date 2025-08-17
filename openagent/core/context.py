@@ -1,12 +1,13 @@
 """
 Gather runtime context for prompts and planning.
 """
+
 from __future__ import annotations
 
 import os
 import platform
 import subprocess
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -34,10 +35,17 @@ class SystemContext:
         return "\n".join(lines)
 
 
-def _run(cmd: str, cwd: Optional[str] = None, timeout: float = 1.5) -> Optional[str]:
+def _run(
+    cmd: list[str], cwd: Optional[str] = None, timeout: float = 1.5
+) -> Optional[str]:
     try:
         out = subprocess.run(
-            cmd, shell=True, cwd=cwd or os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout
+            cmd,
+            shell=False,
+            cwd=cwd or os.getcwd(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
         )
         if out.returncode == 0:
             return out.stdout.decode("utf-8", errors="replace").strip()
@@ -52,8 +60,8 @@ def gather_context(start_dir: Optional[str] = None) -> SystemContext:
     uname = platform.uname()
 
     # Git info (best-effort)
-    branch = _run("git rev-parse --abbrev-ref HEAD", cwd=cwd)
-    short_log = _run("git --no-pager log --oneline -n 3", cwd=cwd)
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd)
+    short_log = _run(["git", "--no-pager", "log", "--oneline", "-n", "3"], cwd=cwd)
 
     return SystemContext(
         cwd=cwd,
@@ -64,4 +72,3 @@ def gather_context(start_dir: Optional[str] = None) -> SystemContext:
         git_branch=branch,
         git_short_log=short_log,
     )
-

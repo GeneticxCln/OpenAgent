@@ -7,7 +7,7 @@ for consistent testing across the test suite.
 
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 # Sample code snippets for testing
 SAMPLE_PYTHON_CODE = {
@@ -19,7 +19,6 @@ def hello_world(name="World"):
 if __name__ == "__main__":
     print(hello_world())
 """,
-    
     "fibonacci": """
 def fibonacci(n):
     \"\"\"Calculate nth Fibonacci number.\"\"\"
@@ -27,7 +26,6 @@ def fibonacci(n):
         return n
     return fibonacci(n-1) + fibonacci(n-2)
 """,
-    
     "buggy_code": """
 def divide_numbers(a, b):
     # Bug: no zero division check
@@ -40,7 +38,6 @@ def process_list(items):
             items.remove(item)
     return items
 """,
-    
     "complex_class": """
 class DataProcessor:
     \"\"\"A complex class for testing analysis.\"\"\"
@@ -69,7 +66,7 @@ class DataProcessor:
             if item > self.config.get('threshold', 0):
                 result.append(item * 2)
         return result
-"""
+""",
 }
 
 # Sample shell commands for testing
@@ -86,9 +83,8 @@ SAMPLE_COMMANDS = {
         "df -h",
         "git status",
         "python --version",
-        "pip list"
+        "pip list",
     ],
-    
     "risky": [
         "rm -rf /",
         "sudo rm -rf /home/user",
@@ -97,9 +93,8 @@ SAMPLE_COMMANDS = {
         "chmod 777 /etc/passwd",
         "killall -9 python",
         "dd if=/dev/zero of=/dev/sda",
-        "chown root:root /etc/shadow"
+        "chown root:root /etc/shadow",
     ],
-    
     "with_flags": [
         "ls -la --color=auto",
         "grep -r -i pattern .",
@@ -107,8 +102,8 @@ SAMPLE_COMMANDS = {
         "git log --oneline --graph",
         "docker run -it --rm ubuntu:latest",
         "pip install --upgrade package",
-        "python -m pytest -v --cov=."
-    ]
+        "python -m pytest -v --cov=.",
+    ],
 }
 
 # Sample LLM responses for testing
@@ -126,7 +121,6 @@ This Python function implements the Fibonacci sequence calculation:
 - Add input validation for negative numbers
 - Consider iterative approach for large numbers
 """,
-    
     "command_explanation": """
 The command `ls -la` lists directory contents with detailed information:
 
@@ -144,7 +138,6 @@ The command `ls -la` lists directory contents with detailed information:
 
 This is a safe read-only command with no security risks.
 """,
-    
     "code_generation": """
 ```python
 def calculate_fibonacci(n: int) -> int:
@@ -179,7 +172,6 @@ if __name__ == "__main__":
         print(f"F({i}) = {calculate_fibonacci(i)}")
 ```
 """,
-    
     "error_message": """
 I encountered an error while processing your request. This could be due to:
 
@@ -189,7 +181,7 @@ I encountered an error while processing your request. This could be due to:
 4. **Network connectivity**: Issues connecting to required services
 
 Please try again with a simpler request, or check the system logs for more details.
-"""
+""",
 }
 
 # Test configuration data
@@ -198,111 +190,115 @@ TEST_CONFIG = {
     "default_device": "cpu",
     "test_timeout": 30,
     "max_test_iterations": 5,
-    "mock_responses": True
+    "mock_responses": True,
 }
 
 # Policy test data
 SAMPLE_POLICIES = {
     "strict": {
         "risky_patterns": [
-            "rm", "rmdir", "mkfs", "fdisk", "dd", "chmod 777", 
-            "chown", "killall", "sudo", "su"
+            "rm",
+            "rmdir",
+            "mkfs",
+            "fdisk",
+            "dd",
+            "chmod 777",
+            "chown",
+            "killall",
+            "sudo",
+            "su",
         ],
         "allowlist": {
             "ls": ["-l", "-a", "-h", "--color"],
             "cat": [],
             "echo": [],
-            "pwd": []
+            "pwd": [],
         },
         "default_decision": "block",
-        "block_risky": True
+        "block_risky": True,
     },
-    
     "permissive": {
         "risky_patterns": ["rm -rf /", "mkfs", "fdisk"],
         "allowlist": {},
         "default_decision": "allow",
-        "block_risky": False
+        "block_risky": False,
     },
-    
     "balanced": {
-        "risky_patterns": [
-            "rm", "rmdir", "mkfs", "fdisk", "dd", "chmod 777"
-        ],
+        "risky_patterns": ["rm", "rmdir", "mkfs", "fdisk", "dd", "chmod 777"],
         "allowlist": {
             "git": ["status", "log", "diff", "add", "commit", "push", "pull"],
             "pip": ["install", "list", "show", "freeze"],
-            "python": ["-m", "-c", "--version"]
+            "python": ["-m", "-c", "--version"],
         },
         "default_decision": "warn",
-        "block_risky": False
-    }
+        "block_risky": False,
+    },
 }
 
 
 def create_test_files(base_dir: Path) -> Dict[str, Path]:
     """
     Create temporary test files with sample content.
-    
+
     Args:
         base_dir: Base directory to create files in
-        
+
     Returns:
         Dictionary mapping file types to their paths
     """
     files = {}
-    
+
     # Create Python files
     for name, code in SAMPLE_PYTHON_CODE.items():
         file_path = base_dir / f"{name}.py"
         file_path.write_text(code)
         files[f"python_{name}"] = file_path
-    
+
     # Create text files
     text_files = {
         "readme": "# Test Project\n\nThis is a test project for OpenAgent.",
         "config": "debug=true\nlog_level=info\nmax_workers=4",
-        "data": "1,2,3,4,5\n6,7,8,9,10\n11,12,13,14,15"
+        "data": "1,2,3,4,5\n6,7,8,9,10\n11,12,13,14,15",
     }
-    
+
     for name, content in text_files.items():
         file_path = base_dir / f"{name}.txt"
         file_path.write_text(content)
         files[f"text_{name}"] = file_path
-    
+
     # Create shell scripts
     shell_scripts = {
         "deploy": "#!/bin/bash\necho 'Deploying application...'\npython manage.py migrate",
-        "backup": "#!/bin/bash\ntar -czf backup.tar.gz /home/user/data"
+        "backup": "#!/bin/bash\ntar -czf backup.tar.gz /home/user/data",
     }
-    
+
     for name, content in shell_scripts.items():
         file_path = base_dir / f"{name}.sh"
         file_path.write_text(content)
         file_path.chmod(0o755)
         files[f"shell_{name}"] = file_path
-    
+
     return files
 
 
 def create_temp_test_env():
     """
     Create a temporary test environment with files and directories.
-    
+
     Returns:
         Tuple of (temp_dir, file_paths)
     """
     temp_dir = Path(tempfile.mkdtemp())
-    
+
     # Create directory structure
     (temp_dir / "src").mkdir()
     (temp_dir / "tests").mkdir()
     (temp_dir / "docs").mkdir()
     (temp_dir / "config").mkdir()
-    
+
     # Create files
     file_paths = create_test_files(temp_dir / "src")
-    
+
     return temp_dir, file_paths
 
 
@@ -312,13 +308,9 @@ def get_mock_agent_config() -> Dict[str, Any]:
         "name": "TestAgent",
         "description": "Test agent for unit testing",
         "model_name": "tiny-llama",
-        "llm_config": {
-            "device": "cpu",
-            "temperature": 0.5,
-            "max_length": 1024
-        },
+        "llm_config": {"device": "cpu", "temperature": 0.5, "max_length": 1024},
         "max_iterations": 3,
-        "safe_mode": True
+        "safe_mode": True,
     }
 
 
@@ -329,26 +321,26 @@ def get_mock_tool_results() -> List[Dict[str, Any]]:
             "tool_name": "command_executor",
             "success": True,
             "content": "total 8\n-rw-r--r-- 1 user user 156 Jan 1 12:00 test.py",
-            "metadata": {"command": "ls -la", "execution_time": 0.1}
+            "metadata": {"command": "ls -la", "execution_time": 0.1},
         },
         {
             "tool_name": "file_manager",
             "success": True,
             "content": "File read successfully",
-            "metadata": {"operation": "read", "file_size": 1024}
+            "metadata": {"operation": "read", "file_size": 1024},
         },
         {
             "tool_name": "system_info",
             "success": True,
             "content": "CPU Usage: 45%\nMemory Usage: 60%",
-            "metadata": {"timestamp": "2025-01-01T12:00:00Z"}
-        }
+            "metadata": {"timestamp": "2025-01-01T12:00:00Z"},
+        },
     ]
 
 
 class MockLLMResponses:
     """Mock LLM responses for consistent testing."""
-    
+
     @staticmethod
     def get_code_analysis_response(code: str, language: str) -> str:
         """Get mock code analysis response."""
@@ -383,7 +375,7 @@ class MockLLMResponses:
 - Add more comprehensive tests
 - Include docstring examples
 """
-    
+
     @staticmethod
     def get_command_explanation(command: str) -> str:
         """Get mock command explanation."""
@@ -424,7 +416,7 @@ This command performs system-level operations that could cause data loss or syst
 
 **Safety:** This command is generally safe to execute.
 """
-    
+
     @staticmethod
     def get_code_generation_response(description: str, language: str) -> str:
         """Get mock code generation response."""

@@ -5,6 +5,7 @@ This module provides a small, dependency-free classifier to decide whether
 we should use tools, answer directly, or explain-only, without invoking
 heavy LLM calls.
 """
+
 from __future__ import annotations
 
 import re
@@ -13,21 +14,32 @@ from typing import Literal
 
 
 class Route(Enum):
-    DIRECT = "direct"          # answer directly via LLM (no tools)
-    TOOL = "tool"              # use tools (system, file, git, grep)
-    EXPLAIN_ONLY = "explain"   # explain the command; don't run
-    CODEGEN = "codegen"        # generate code
+    DIRECT = "direct"  # answer directly via LLM (no tools)
+    TOOL = "tool"  # use tools (system, file, git, grep)
+    EXPLAIN_ONLY = "explain"  # explain the command; don't run
+    CODEGEN = "codegen"  # generate code
 
 
 # Precompile basic regexes for speed
-_CMD_LIKE = re.compile(r"(^|\b)(ls|cat|grep|find|git|docker|kubectl|curl|wget|python|pip|npm|node)\b")
+_CMD_LIKE = re.compile(
+    r"(^|\b)(ls|cat|grep|find|git|docker|kubectl|curl|wget|python|pip|npm|node)\b"
+)
 _GIT_LIKE = re.compile(r"\bgit\b|pull request|diff|commit|branch", re.I)
-_FILE_LIKE = re.compile(r"\b(read|write|append|create|delete|move|rename)\b.*\b(file|folder|directory|path)\b", re.I)
-_SYSTEM_LIKE = re.compile(r"\b(cpu|memory|ram|disk|usage|processes|system info|uptime|load)\b", re.I)
+_FILE_LIKE = re.compile(
+    r"\b(read|write|append|create|delete|move|rename)\b.*\b(file|folder|directory|path)\b",
+    re.I,
+)
+_SYSTEM_LIKE = re.compile(
+    r"\b(cpu|memory|ram|disk|usage|processes|system info|uptime|load)\b", re.I
+)
 _SEARCH_LIKE = re.compile(r"\b(search|grep|ripgrep|rg|scan|find in)\b", re.I)
 _EXPLAIN_LIKE = re.compile(r"\b(explain|what does|is this safe|meaning of)\b", re.I)
-_CODEGEN_LIKE = re.compile(r"\b(write|generate|implement|create)\b.*\b(code|function|class|script|api)\b", re.I)
-_DANGEROUS = re.compile(r"\b(rm\s+-rf|chmod\s+777|chown\s+/.+|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh)\b", re.I)
+_CODEGEN_LIKE = re.compile(
+    r"\b(write|generate|implement|create)\b.*\b(code|function|class|script|api)\b", re.I
+)
+_DANGEROUS = re.compile(
+    r"\b(rm\s+-rf|chmod\s+777|chown\s+/.+|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh)\b", re.I
+)
 
 
 def classify(text: str) -> Route:
@@ -43,7 +55,12 @@ def classify(text: str) -> Route:
         return Route.CODEGEN
 
     # Obvious git/file/system/search intents use tools
-    if _GIT_LIKE.search(tl) or _FILE_LIKE.search(tl) or _SYSTEM_LIKE.search(tl) or _SEARCH_LIKE.search(tl):
+    if (
+        _GIT_LIKE.search(tl)
+        or _FILE_LIKE.search(tl)
+        or _SYSTEM_LIKE.search(tl)
+        or _SEARCH_LIKE.search(tl)
+    ):
         return Route.TOOL
 
     # Command-like text: suggest tools, but prefer explain-only if dangerous
@@ -56,5 +73,3 @@ def classify(text: str) -> Route:
 
     # Default to direct to minimize latency unless tool keywords are present
     return Route.DIRECT
-
-

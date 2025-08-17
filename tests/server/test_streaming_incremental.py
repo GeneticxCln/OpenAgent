@@ -1,6 +1,7 @@
 import asyncio
-import json
 import importlib
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -33,7 +34,9 @@ def test_sse_chat_streams_incremental_tokens(client, app_module, monkeypatch):
     tokens = ["Hello ", "world", "! "]
     app_module.agents["default"] = FakeStreamingAgent(tokens)
 
-    resp = client.post("/chat/stream", json={"message": "hi"}, headers={"Accept": "text/event-stream"})
+    resp = client.post(
+        "/chat/stream", json={"message": "hi"}, headers={"Accept": "text/event-stream"}
+    )
     assert resp.status_code == 200
     body = resp.text
     # Expect multiple data: lines for chunks and final end event
@@ -63,4 +66,3 @@ def test_ws_chat_streams_incremental_tokens(client, app_module):
                 seen_chunks += 1
         assert seen_chunks >= len(tokens)
         assert saw_end
-

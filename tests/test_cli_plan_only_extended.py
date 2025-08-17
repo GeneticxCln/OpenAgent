@@ -1,4 +1,5 @@
 import json
+
 import pytest
 from typer.testing import CliRunner
 
@@ -8,7 +9,9 @@ runner = CliRunner()
 
 
 def _plan(task: str):
-    res = runner.invoke(app, ["do", task, "--plan-only", "--auto-execute"], catch_exceptions=False)
+    res = runner.invoke(
+        app, ["do", task, "--plan-only", "--auto-execute"], catch_exceptions=False
+    )
     assert res.exit_code == 0, res.output
     return json.loads(res.stdout.strip())
 
@@ -22,7 +25,11 @@ def test_cli_plan_only_network_diagnostics():
     names = _names(data)
     assert names.count("command_executor") >= 2
     # Check for ss and ping planned
-    ce_cmds = [c.get("parameters", {}).get("command", "") for c in data.get("calls", []) if c["tool_name"] == "command_executor"]
+    ce_cmds = [
+        c.get("parameters", {}).get("command", "")
+        for c in data.get("calls", [])
+        if c["tool_name"] == "command_executor"
+    ]
     assert any("ss -tulpn" in cmd for cmd in ce_cmds)
     assert any("ping -c 3 8.8.8.8" in cmd for cmd in ce_cmds)
 
@@ -47,4 +54,3 @@ def test_cli_plan_only_error_recovery():
     names = _names(data)
     # Should include a repo_grep step
     assert "repo_grep" in names
-

@@ -1,8 +1,8 @@
 import pytest
 
 from openagent.core.tool_selector import SmartToolSelector, ToolPlan
-from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 from openagent.tools.git import RepoGrep
+from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 
 pytestmark = pytest.mark.asyncio
 
@@ -19,9 +19,11 @@ async def test_heuristic_creates_multi_step_plan_list_and_disk(monkeypatch):
 
     # Force intent UNKNOWN so fallback heuristic path is used
     from openagent.core.tool_selector import ToolIntent
+
     async def _fake_analyze(*args, **kwargs):
         return ToolIntent.UNKNOWN
-    monkeypatch.setattr(SmartToolSelector, 'analyze_intent', _fake_analyze)
+
+    monkeypatch.setattr(SmartToolSelector, "analyze_intent", _fake_analyze)
     plan: ToolPlan = await selector.create_tool_plan("show files and free space")
 
     # Should create at least two calls based on heuristics
@@ -53,10 +55,14 @@ async def test_heuristic_adds_search_and_system_info(monkeypatch):
 
     # Force intent UNKNOWN so we don't shortcut to single-step code_search or system_info
     from openagent.core.tool_selector import ToolIntent
+
     async def _fake_analyze(*args, **kwargs):
         return ToolIntent.UNKNOWN
-    monkeypatch.setattr(SmartToolSelector, 'analyze_intent', _fake_analyze)
-    plan: ToolPlan = await selector.create_tool_plan('grep for "openagent" and show overview')
+
+    monkeypatch.setattr(SmartToolSelector, "analyze_intent", _fake_analyze)
+    plan: ToolPlan = await selector.create_tool_plan(
+        'grep for "openagent" and show overview'
+    )
 
     names = [c.tool_name for c in plan.calls]
     assert "repo_grep" in names
@@ -65,4 +71,3 @@ async def test_heuristic_adds_search_and_system_info(monkeypatch):
     # Check that the search pattern was extracted
     grep_calls = [c for c in plan.calls if c.tool_name == "repo_grep"]
     assert any(c.parameters.get("pattern") for c in grep_calls)
-

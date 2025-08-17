@@ -1,11 +1,12 @@
 """
 Helpers for WebSocket authentication and rate limiting.
 """
+
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Dict, Optional
 
-from .models import WebSocketMessage, MessageType
+from .models import MessageType, WebSocketMessage
 
 
 async def authenticate_on_connect(

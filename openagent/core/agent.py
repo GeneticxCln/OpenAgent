@@ -8,10 +8,10 @@ interface with practical functionality for message processing and tool usage.
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Union
+
 from openagent.core.base import BaseAgent, BaseMessage, BaseTool, ToolResult
 from openagent.core.exceptions import AgentError, ToolError
 from openagent.core.llm import get_llm
-
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 class Agent(BaseAgent):
     """
     Main Agent implementation with tool integration and message processing.
-    
+
     This class provides a practical implementation of an AI agent that can
     process messages, use tools, and maintain conversation history.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -32,11 +32,11 @@ class Agent(BaseAgent):
         max_iterations: int = 10,
         model_name: str = "codellama-7b",
         llm_config: Optional[Dict[str, Any]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the Agent.
-        
+
         Args:
             name: Unique name for the agent
             description: Description of the agent's role/purpose
@@ -50,94 +50,105 @@ class Agent(BaseAgent):
         self.max_iterations = max_iterations
         self.iteration_count = 0
         self.model_name = model_name
-        
+
         # Initialize LLM (local-only routing: Ollama or Hugging Face)
         llm_config = llm_config or {}
         self.llm = get_llm(model_name=model_name, **llm_config)
-        
+
         # Agent state
         self.is_processing = False
         self.current_task = None
-        
-        logger.info(f"Initialized agent '{name}' with {len(self.tools)} tools and model '{model_name}'")
-    
+
+        logger.info(
+            f"Initialized agent '{name}' with {len(self.tools)} tools and model '{model_name}'"
+        )
+
     async def process_message(self, message: Union[str, BaseMessage]) -> BaseMessage:
         """
         Process an incoming message and generate a response.
-        
+
         This method handles the main agent workflow:
         1. Parse and validate the input message
         2. Analyze if tools are needed
         3. Execute tools if necessary
         4. Generate and return a response
-        
+
         Args:
             message: Input message to process
-            
+
         Returns:
             BaseMessage containing the agent's response
-            
+
         Raises:
             AgentError: If message processing fails
         """
         if self.is_processing:
             raise AgentError("Agent is already processing a message")
-        
+
         try:
             self.is_processing = True
             self.iteration_count = 0
-            
+
             # Convert string to BaseMessage if needed
             if isinstance(message, str):
                 input_message = BaseMessage(content=message, role="user")
             else:
                 input_message = message
-            
+
             # Add to conversation history
             self.add_message(input_message)
-            
-            logger.info(f"Agent '{self.name}' processing message: {input_message.content[:100]}...")
-            
+
+            logger.info(
+                f"Agent '{self.name}' processing message: {input_message.content[:100]}..."
+            )
+
             # Process the message and generate response
             from openagent.core.observability import get_metrics_collector
+
             _metrics = get_metrics_collector()
             import time as _t
+
             _start = _t.time()
             response_content = await self._generate_response(input_message.content)
             _dur = _t.time() - _start
             try:
-                _metrics.record_agent_message(self.name, success=True, response_time=_dur)
+                _metrics.record_agent_message(
+                    self.name, success=True, response_time=_dur
+                )
             except Exception:
                 pass
-            
+
             # Create response message
             response = BaseMessage(
                 content=response_content,
                 role="assistant",
                 metadata={
                     "agent_name": self.name,
-                    "tools_used": getattr(self, '_tools_used', []),
-                    "iterations": self.iteration_count
-                }
+                    "tools_used": getattr(self, "_tools_used", []),
+                    "iterations": self.iteration_count,
+                },
             )
-            
+
             # Add response to history
             self.add_message(response)
-            
+
             logger.info(f"Agent '{self.name}' generated response")
             return response
-            
+
         except Exception as e:
             logger.error(f"Error processing message in agent '{self.name}': {e}")
             try:
                 from openagent.core.observability import get_metrics_collector
-                get_metrics_collector().record_agent_message(self.name, success=False, response_time=0.0)
+
+                get_metrics_collector().record_agent_message(
+                    self.name, success=False, response_time=0.0
+                )
             except Exception:
                 pass
             error_response = BaseMessage(
                 content=f"I encountered an error while processing your request: {str(e)}",
                 role="assistant",
-                metadata={"error": True, "agent_name": self.name}
+                metadata={"error": True, "agent_name": self.name},
             )
             self.add_message(error_response)
             return error_response
@@ -145,50 +156,63 @@ class Agent(BaseAgent):
             self.is_processing = False
             self.current_task = None
             self.iteration_count = 0
-    
+
     async def _generate_response(self, input_text: str) -> str:
         """
         Generate a response using the integrated Hugging Face LLM.
         Attempts fast fallback first for common queries.
-        
+
         Args:
             input_text: Input text to respond to
-            
+
         Returns:
             Generated response text
         """
         # Import fallback functions locally to avoid circular imports
         from ..core.fallback import can_handle_fast, handle_fast
-        
+
         # Try fast fallback first for common queries
         if can_handle_fast(input_text):
             fallback_response = handle_fast(input_text)
             if fallback_response:
-                logger.info(f"Using fast fallback response for query: {input_text[:50]}...")
+                logger.info(
+                    f"Using fast fallback response for query: {input_text[:50]}..."
+                )
                 return fallback_response
-        
+
         # Reset tools used tracking
         self._tools_used = []
-        
+
         # Get conversation context
         context = []
         for msg in self.message_history[-5:]:  # Last 5 messages for context
-            context.append({
-                "role": msg.role,
-                "content": msg.content
-            })
-        
+            context.append({"role": msg.role, "content": msg.content})
+
         # Fast router classification to reduce latency
-        from openagent.core.router import classify, Route
+        from openagent.core.router import Route, classify
+
         route = classify(input_text)
 
         # Determine if this is a code/terminal related query
-        code_keywords = ["code", "script", "function", "class", "command", "terminal", "bash", "python", "programming"]
-        is_code_query = (route in (Route.CODEGEN, Route.TOOL)) or any(keyword in input_text.lower() for keyword in code_keywords)
-        
+        code_keywords = [
+            "code",
+            "script",
+            "function",
+            "class",
+            "command",
+            "terminal",
+            "bash",
+            "python",
+            "programming",
+        ]
+        is_code_query = (route in (Route.CODEGEN, Route.TOOL)) or any(
+            keyword in input_text.lower() for keyword in code_keywords
+        )
+
         # Build context block for prompt injection (cwd, shell, OS, recent git)
         try:
             from openagent.core.context import gather_context
+
             sysctx = gather_context()
             ctx_block = sysctx.to_prompt_block()
         except Exception:
@@ -209,7 +233,7 @@ class Agent(BaseAgent):
         system_prompt = base_system + (self.description or "") + "\n" + guidance
         if ctx_block:
             system_prompt += "\nContext:\n" + ctx_block
-        
+
         # Check if we need to use tools
         tool_context = ""
         planned_calls = None
@@ -218,22 +242,31 @@ class Agent(BaseAgent):
             # First try SmartToolSelector plan using the model
             try:
                 from openagent.core.tool_selector import SmartToolSelector
+
                 tools_map = {t.name: t for t in self.tools}
                 selector = SmartToolSelector(self.llm, tools_map)
-                sys_ctx_dict = {"cwd": sysctx.cwd, "shell": sysctx.shell} if 'sysctx' in locals() and sysctx else None
+                sys_ctx_dict = (
+                    {"cwd": sysctx.cwd, "shell": sysctx.shell}
+                    if "sysctx" in locals() and sysctx
+                    else None
+                )
                 plan = await selector.create_tool_plan(input_text, context=sys_ctx_dict)
                 exec_results = await selector.execute_plan(plan)
                 if exec_results:
                     use_tools = True
                     tool_context = "\n\nTool Results:\n"
-                    for res, call in zip(exec_results, plan.calls if plan and plan.calls else []):
-                        name = getattr(call, 'tool_name', 'tool')
+                    for res, call in zip(
+                        exec_results, plan.calls if plan and plan.calls else []
+                    ):
+                        name = getattr(call, "tool_name", "tool")
                         if res.success:
                             tool_context += f"- {name}: {str(res.content)[:800]}\n"
                         else:
                             tool_context += f"- {name}: Error - {res.error}\n"
                     # Track used tools
-                    self._tools_used = [getattr(c, 'tool_name', '') for c in (plan.calls or [])]
+                    self._tools_used = [
+                        getattr(c, "tool_name", "") for c in (plan.calls or [])
+                    ]
                     self.iteration_count += len(exec_results)
             except Exception:
                 # Fall back to legacy path
@@ -244,9 +277,16 @@ class Agent(BaseAgent):
                 legacy_should = await self._should_use_tools(input_text)
                 if route == Route.TOOL:
                     use_tools = True
-                elif route == Route.EXPLAIN_ONLY and any(t.name == "command_executor" for t in self.tools):
+                elif route == Route.EXPLAIN_ONLY and any(
+                    t.name == "command_executor" for t in self.tools
+                ):
                     # Explain a command via CommandExecutor in explain-only mode
-                    planned_calls = [{"name": "command_executor", "args": {"command": input_text, "explain_only": True}}]
+                    planned_calls = [
+                        {
+                            "name": "command_executor",
+                            "args": {"command": input_text, "explain_only": True},
+                        }
+                    ]
                     use_tools = True
                 elif route == Route.DIRECT or route == Route.CODEGEN:
                     use_tools = legacy_should
@@ -268,64 +308,97 @@ class Agent(BaseAgent):
                         tool_context += f"- {tool_name}: {str(result.content)[:800]}\n"
                     else:
                         tool_context += f"- {tool_name}: Error - {result.error}\n"
-        
+
         # Persist block metadata for history consumers
         try:
             self._last_block = {
                 "input": input_text,
-                "plan": {
-                    "calls": [getattr(c, 'tool_name', '') for c in (locals().get('plan').calls if 'plan' in locals() and getattr(locals().get('plan'), 'calls', None) else [])]
-                } if 'plan' in locals() and locals().get('plan') else None,
-                "tool_results": []
+                "plan": (
+                    {
+                        "calls": [
+                            getattr(c, "tool_name", "")
+                            for c in (
+                                locals().get("plan").calls
+                                if "plan" in locals()
+                                and getattr(locals().get("plan"), "calls", None)
+                                else []
+                            )
+                        ]
+                    }
+                    if "plan" in locals() and locals().get("plan")
+                    else None
+                ),
+                "tool_results": [],
             }
-            if 'exec_results' in locals() and locals().get('exec_results'):
-                for res, call in zip(exec_results, (locals().get('plan').calls if locals().get('plan') else [])):
-                    self._last_block["tool_results"].append({
-                        "tool": getattr(call, 'tool_name', 'tool'),
-                        "success": bool(getattr(res, 'success', False)),
-                        "content": getattr(res, 'content', '')[:2000],
-                        "error": getattr(res, 'error', None),
-                    })
+            if "exec_results" in locals() and locals().get("exec_results"):
+                for res, call in zip(
+                    exec_results,
+                    (locals().get("plan").calls if locals().get("plan") else []),
+                ):
+                    self._last_block["tool_results"].append(
+                        {
+                            "tool": getattr(call, "tool_name", "tool"),
+                            "success": bool(getattr(res, "success", False)),
+                            "content": getattr(res, "content", "")[:2000],
+                            "error": getattr(res, "error", None),
+                        }
+                    )
         except Exception:
             self._last_block = {"input": input_text}
 
         # Prepare the final prompt with tool context if available
         final_input = input_text
         if tool_context:
-            final_input += tool_context + "\n\nPlease provide a comprehensive response using the tool results above."
-        
+            final_input += (
+                tool_context
+                + "\n\nPlease provide a comprehensive response using the tool results above."
+            )
+
         try:
             # Generate response using the LLM
             response = await self.llm.generate_response(
                 prompt=final_input,
                 system_prompt=system_prompt,
                 context=context[-3:] if context else None,  # Last 3 exchanges
-                max_new_tokens=1024
+                max_new_tokens=1024,
             )
-            
+
             return response.strip()
-            
+
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             # Propagate to outer handler so error metadata is set
             raise AgentError(f"LLM generation failed: {e}")
-    
+
     async def _should_use_tools(self, input_text: str) -> bool:
         """
         Determine if tools should be used for this input.
-        
+
         Args:
             input_text: Input text to analyze
-            
+
         Returns:
             True if tools should be used
         """
         # Prefer using LLM to decide if tools are needed for non-trivial tasks
         input_lower = input_text.lower()
-        heuristics = ["run", "execute", "search", "grep", "status", "log", "diff", "list files", "read file", "show system"]
+        heuristics = [
+            "run",
+            "execute",
+            "search",
+            "grep",
+            "status",
+            "log",
+            "diff",
+            "list files",
+            "read file",
+            "show system",
+        ]
         return any(k in input_lower for k in heuristics)
-    
-    async def _propose_fix_for_command(self, original_command: str, error_text: str) -> Optional[str]:
+
+    async def _propose_fix_for_command(
+        self, original_command: str, error_text: str
+    ) -> Optional[str]:
         """Use the LLM to propose a safe corrected command for a failed command.
         Never executes it; returns a string suggestion or None.
         """
@@ -338,7 +411,9 @@ class Agent(BaseAgent):
                 f"Original command:\n{original_command}\n\n"
                 f"Error/output:\n{error_text}\n"
             )
-            suggestion = await self.llm.generate_response(prompt, system_prompt="Command Repair")
+            suggestion = await self.llm.generate_response(
+                prompt, system_prompt="Command Repair"
+            )
             # Extract first line as the command, strip backticks if any
             if suggestion:
                 line = suggestion.strip().splitlines()[0].strip()
@@ -347,14 +422,16 @@ class Agent(BaseAgent):
         except Exception:
             return None
         return None
-    
-    async def _execute_tools(self, input_text: str, planned_calls: Optional[List[Dict[str, Any]]] = None) -> Dict[str, ToolResult]:
+
+    async def _execute_tools(
+        self, input_text: str, planned_calls: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, ToolResult]:
         """
         Execute relevant tools based on input text.
-        
+
         Args:
             input_text: Input text to process with tools
-            
+
         Returns:
             Dictionary mapping tool names to their results
         """
@@ -364,7 +441,11 @@ class Agent(BaseAgent):
             calls = planned_calls
         else:
             # Fallback: naive selection over all tools
-            calls = [{"name": t.name, "args": input_text} for t in self.tools if await self._tool_is_relevant(t, input_text)]
+            calls = [
+                {"name": t.name, "args": input_text}
+                for t in self.tools
+                if await self._tool_is_relevant(t, input_text)
+            ]
 
         for call in calls:
             try:
@@ -377,8 +458,18 @@ class Agent(BaseAgent):
                 # If a command fails, propose a non-executed fix via LLM (repair loop proposal)
                 if tool.name == "command_executor" and not result.success:
                     try:
-                        cmd = args.get("command") if isinstance(args, dict) else str(args)
-                        suggestion = await self._propose_fix_for_command(cmd or "", result.error or (result.content if isinstance(result.content, str) else ""))
+                        cmd = (
+                            args.get("command") if isinstance(args, dict) else str(args)
+                        )
+                        suggestion = await self._propose_fix_for_command(
+                            cmd or "",
+                            result.error
+                            or (
+                                result.content
+                                if isinstance(result.content, str)
+                                else ""
+                            ),
+                        )
                         if suggestion:
                             # Attach suggestion to result metadata (non-executed)
                             result.metadata = result.metadata or {}
@@ -389,13 +480,17 @@ class Agent(BaseAgent):
                 self._tools_used.append(tool.name)
                 self.iteration_count += 1
                 if self.iteration_count >= self.max_iterations:
-                    logger.warning(f"Maximum iterations ({self.max_iterations}) reached")
+                    logger.warning(
+                        f"Maximum iterations ({self.max_iterations}) reached"
+                    )
                     break
             except Exception as e:
                 logger.error(f"Error executing tool {call}: {e}")
-                results[call.get("name", "unknown")] = ToolResult(success=False, content="", error=str(e))
+                results[call.get("name", "unknown")] = ToolResult(
+                    success=False, content="", error=str(e)
+                )
         return results
-    
+
     def _tool_is_relevant_sync(self, tool: BaseTool, input_text: str) -> bool:
         """
         Synchronous logic to check if a tool is relevant for the given input.
@@ -404,28 +499,37 @@ class Agent(BaseAgent):
         # Simple keyword-based relevance (replace with LLM analysis)
         input_lower = input_text.lower()
         tool_name_lower = tool.name.lower()
-        
+
         # Basic keyword matching
         if "calculator" in tool_name_lower or "math" in tool_name_lower:
-            return any(word in input_lower for word in ["calculate", "compute", "math", "+", "-", "*", "/"])
-        
+            return any(
+                word in input_lower
+                for word in ["calculate", "compute", "math", "+", "-", "*", "/"]
+            )
+
         if "search" in tool_name_lower or "web" in tool_name_lower:
-            return any(word in input_lower for word in ["search", "find", "look up", "web", "internet"])
-        
+            return any(
+                word in input_lower
+                for word in ["search", "find", "look up", "web", "internet"]
+            )
+
         if "weather" in tool_name_lower:
-            return any(word in input_lower for word in ["weather", "temperature", "forecast", "rain", "sunny"])
-        
+            return any(
+                word in input_lower
+                for word in ["weather", "temperature", "forecast", "rain", "sunny"]
+            )
+
         # Default: always consider relevant if no specific matching logic
         return True
 
     async def _tool_is_relevant(self, tool: BaseTool, input_text: str) -> bool:
         """
         Check if a tool is relevant for the given input.
-        
+
         Args:
             tool: Tool to check
             input_text: Input text to analyze
-            
+
         Returns:
             True if tool is relevant
         """
@@ -446,12 +550,13 @@ class Agent(BaseAgent):
             )
             raw = await self.llm.generate_response(prompt, system_prompt="Tool Planner")
             import json
+
             # Extract JSON if wrapped
             start = raw.find("{")
             end = raw.rfind("}")
             if start == -1 or end == -1:
                 return None
-            obj = json.loads(raw[start:end+1])
+            obj = json.loads(raw[start : end + 1])
             calls = obj.get("tool_calls")
             if isinstance(calls, list):
                 # keep only known tools
@@ -464,15 +569,17 @@ class Agent(BaseAgent):
             return None
         except Exception:
             return None
-    
-    async def _generate_main_response(self, input_text: str, tool_results: List[str]) -> str:
+
+    async def _generate_main_response(
+        self, input_text: str, tool_results: List[str]
+    ) -> str:
         """
         Generate the main response text.
-        
+
         Args:
             input_text: Original input text
             tool_results: Results from tool execution
-            
+
         Returns:
             Generated response text
         """
@@ -483,7 +590,7 @@ class Agent(BaseAgent):
             "Based on your message, I'll do my best to provide a helpful response.",
             f"As an AI agent named {self.name}, I'm designed to assist with various tasks.",
         ]
-        
+
         # Select response based on input length or content
         if len(input_text) > 100:
             response = "Thank you for your detailed message. I've processed your request and here's my response:"
@@ -493,13 +600,13 @@ class Agent(BaseAgent):
             response = "That's a great question! Let me help you find an answer."
         else:
             response = responses[hash(input_text) % len(responses)]
-        
+
         return response
-    
+
     def get_status(self) -> Dict[str, Any]:
         """
         Get current agent status.
-        
+
         Returns:
             Dictionary containing agent status information
         """
@@ -514,7 +621,7 @@ class Agent(BaseAgent):
             "iteration_count": self.iteration_count,
             "max_iterations": self.max_iterations,
         }
-    
+
     def reset(self) -> None:
         """Reset agent state and clear history."""
         self.clear_history()
@@ -522,6 +629,7 @@ class Agent(BaseAgent):
         self.current_task = None
         self.iteration_count = 0
         logger.info(f"Agent '{self.name}' has been reset")
+
 
 # Expose __wrapped__ for testing convenience
 Agent._tool_is_relevant.__wrapped__ = Agent._tool_is_relevant_sync

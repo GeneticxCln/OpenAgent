@@ -1,9 +1,9 @@
+import importlib
 import os
 import types
+
 import pytest
 from fastapi.testclient import TestClient
-
-import importlib
 
 
 def _load_app_with_auth(enabled: bool):
@@ -24,9 +24,11 @@ def client_no_auth():
 @pytest.fixture()
 def client_with_auth(monkeypatch):
     app, mod = _load_app_with_auth(True)
+
     # Monkeypatch token verifier to accept a specific token
     async def _ok(token: str):
         return {"sub": "user"} if token == "good" else None
+
     monkeypatch.setattr(mod, "_verify_token", _ok)
     return TestClient(app), mod
 
@@ -57,4 +59,3 @@ def test_ws_chat_accepts_with_bearer_token_when_auth_enabled(client_with_auth):
         ws.send_text("{}")
         # Close cleanly
         ws.close()
-

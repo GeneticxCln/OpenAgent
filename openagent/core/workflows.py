@@ -4,6 +4,7 @@ Workflow and Snippet management for OpenAgent.
 Workflows are YAML files in ~/.config/openagent/workflows/*.yaml
 Each defines: name, description, params, and steps (natural language or tool calls).
 """
+
 from __future__ import annotations
 
 import os
@@ -64,36 +65,66 @@ class WorkflowManager:
     def create(self, name: str, description: str = "") -> Workflow:
         wf = Workflow(name=name, description=description, params={}, steps=[])
         path = self.base_dir / f"{name}.yaml"
-        path.write_text(yaml.safe_dump({
-            "name": wf.name,
-            "description": wf.description,
-            "params": wf.params,
-            "steps": wf.steps,
-        }, sort_keys=False))
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "name": wf.name,
+                    "description": wf.description,
+                    "params": wf.params,
+                    "steps": wf.steps,
+                },
+                sort_keys=False,
+            )
+        )
         return wf
 
     def save(self, wf: Workflow) -> None:
         path = self.base_dir / f"{wf.name}.yaml"
-        path.write_text(yaml.safe_dump({
-            "name": wf.name,
-            "description": wf.description,
-            "params": wf.params,
-            "steps": wf.steps,
-        }, sort_keys=False))
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "name": wf.name,
+                    "description": wf.description,
+                    "params": wf.params,
+                    "steps": wf.steps,
+                },
+                sort_keys=False,
+            )
+        )
 
-    def sync(self, repo_url: str, branch: str = "main", dest: Optional[Path] = None) -> Path:
+    def sync(
+        self, repo_url: str, branch: str = "main", dest: Optional[Path] = None
+    ) -> Path:
         """Sync workflows from a Git repo to the workflows directory or dest."""
         import subprocess as sp
+
         target = dest or self.base_dir
         target.mkdir(parents=True, exist_ok=True)
         git_dir = target / ".git"
         try:
             if git_dir.exists():
-                sp.run(["git", "-C", str(target), "fetch", "--all", "--quiet"], check=False)
+                sp.run(
+                    ["git", "-C", str(target), "fetch", "--all", "--quiet"], check=False
+                )
                 sp.run(["git", "-C", str(target), "checkout", branch], check=False)
-                sp.run(["git", "-C", str(target), "pull", "--ff-only", "origin", branch], check=False)
+                sp.run(
+                    ["git", "-C", str(target), "pull", "--ff-only", "origin", branch],
+                    check=False,
+                )
             else:
-                sp.run(["git", "clone", "--depth", "1", "--branch", branch, repo_url, str(target)], check=True)
+                sp.run(
+                    [
+                        "git",
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        branch,
+                        repo_url,
+                        str(target),
+                    ],
+                    check=True,
+                )
         except Exception:
             # Best-effort; leave files as-is
             pass

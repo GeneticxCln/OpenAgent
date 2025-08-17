@@ -1,6 +1,6 @@
 import asyncio
 import json
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,16 +12,20 @@ async def test_ollama_generate_non_streaming(monkeypatch):
     class FakeResp:
         def __init__(self):
             self._json = {"response": "hello world"}
+
         def json(self):
             return self._json
+
         def raise_for_status(self):
             return None
 
     class FakeClient:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
         async def post(self, url, json=None):
             return FakeResp()
 
@@ -42,8 +46,10 @@ async def test_ollama_generate_streaming(monkeypatch):
                 json.dumps({"done": True}),
             ]
             self._i = 0
+
         def raise_for_status(self):
             return None
+
         async def aiter_lines(self):
             for line in self.lines:
                 yield line
@@ -51,14 +57,17 @@ async def test_ollama_generate_streaming(monkeypatch):
     class FakeStreamCtx:
         async def __aenter__(self):
             return FakeStreamResp()
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
     class FakeClient:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
         def stream(self, method, url, json=None):
             return FakeStreamCtx()
 
@@ -68,4 +77,3 @@ async def test_ollama_generate_streaming(monkeypatch):
         async for c in llm.stream_generate("hi"):
             chunks.append(c)
         assert "".join(chunks) == "hello"
-
