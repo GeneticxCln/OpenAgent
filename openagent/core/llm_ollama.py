@@ -34,6 +34,24 @@ async def get_default_ollama_model(host: Optional[str] = None) -> Optional[str]:
     except Exception:
         return None
 
+async def list_ollama_models(host: Optional[str] = None) -> list[str]:
+    """Return a list of installed Ollama model names (tags without :version)."""
+    base = host or os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            r.raise_for_status()
+            data = r.json() or {}
+            models = data.get("models") or []
+            names: list[str] = []
+            for m in models:
+                name = (m.get("name") or "").split(":", 1)[0]
+                if name and name not in names:
+                    names.append(name)
+            return names
+    except Exception:
+        return []
+
 class OllamaLLM:
     """Ollama LLM provider using the local Ollama server.
 

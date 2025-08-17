@@ -161,11 +161,51 @@ def create_agent(
 
 
 @app.command()
-def menu():
-    """Pick an agent/model and start chat immediately (safe/fast defaults, local-only)."""
+def menu(allow_presets: bool = typer.Option(False, "--allow-presets", help="Allow showing preset HF models if no local Ollama models are found")):
+    """Pick an agent/model and start chat immediately (local-only by default; no auto-serve)."""
     from openagent.core.llm import ModelConfig
 
-    # Local-only build: do not include any cloud/Gemini options
+    # Try to discover local Ollama models
+    try:
+        import asyncio as _asyncio
+        from openagent.core.llm_ollama import list_ollama_models
+        local_models = _asyncio.get_event_loop().run_until_complete(list_ollama_models())
+    except Exception:
+        local_models = []
+
+    if local_models:
+        console.print(Panel.fit("Choose a local Ollama model", title="OpenAgent"))
+        for idx, name in enumerate(local_models, start=1):
+            console.print(f"  {idx}. ollama:{name}")
+        try:
+            model_idx = int(console.input("Model number: ").strip() or "1")
+            model_idx = max(1, min(model_idx, len(local_models)))
+        except Exception:
+            model_idx = 1
+        chosen = local_models[model_idx - 1]
+        console.print("\nLaunching local model...\n")
+        chat(
+            model=f"ollama:{chosen}",
+            provider="local",
+            device="auto",
+            load_in_4bit=True,
+            debug=False,
+            unsafe_exec=False,
+            max_new_tokens=128,
+            temperature=0.5,
+            auto_serve=False,
+            api_url=None,
+            ws=False,
+            no_stream=False,
+        )
+        return
+
+    # No local models detected
+    if not allow_presets:
+        console.print(Panel("No local Ollama models detected.\n\nInstall a model, for example:\n  ollama pull qwen3:8b\n\nThen re-run: openagent\n\nTo browse preset models instead, run:\n  openagent menu --allow-presets", title="Local Models Only"))
+        return
+
+    # Optional fallback to presets if explicitly allowed
     code_models = list(ModelConfig.CODE_MODELS.keys())
     chat_models = list(ModelConfig.CHAT_MODELS.keys())
     light_models = list(ModelConfig.LIGHTWEIGHT_MODELS.keys())
@@ -176,7 +216,7 @@ def menu():
         ("Chat", chat_models),
     ]
 
-    console.print(Panel.fit("Choose your agent/model (local only)", title="OpenAgent"))
+    console.print(Panel.fit("Choose your agent/model (presets)", title="OpenAgent"))
 
     # Category selection
     for idx, (title, _) in enumerate(sections, start=1):
@@ -200,16 +240,21 @@ def menu():
 
     model = models[model_idx - 1]
 
-    # Start chat immediately with safe/fast defaults
+    # Start chat with chosen preset, without auto-serve
     console.print("\nLaunching agent...\n")
     chat(
-        model="auto",
+        model=model,
+        provider="local",
         device="auto",
         load_in_4bit=True,
         debug=False,
-        unsafe_exec=False,      # explain-only by default
+        unsafe_exec=False,
         max_new_tokens=128,
         temperature=0.5,
+        auto_serve=False,
+        api_url=None,
+        ws=False,
+        no_stream=False,
     )
 
 
@@ -247,15 +292,19 @@ def chat(
     # Provider-aware resolution
     if provider not in ("auto", "local", "cloud"):
         raise typer.BadParameter("--provider must be one of: auto|local|cloud")
-    if provider == "local":
-        # Force local: Ollama if installed, else tiny-llama
-        try:
-            import asyncio as _asyncio
-            from openagent.core.llm_ollama import get_default_ollama_model
-            m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
-        except Exception:
-            m = None
-        resolved_model = f"ollama:{m}" if m else (model if model != "auto" else "tiny-llama")
+    elif provider == "local":
+        # Respect explicit ollama:<tag>
+        if isinstance(model, str) and model.startswith("ollama:") and model != "ollama:":
+            resolved_model = model
+        else:
+            # Prefer installed Ollama default; else tiny-llama or the given non-auto model
+            try:
+                import asyncio as _asyncio
+                from openagent.core.llm_ollama import get_default_ollama_model
+                m = _asyncio.get_event_loop().run_until_complete(get_default_ollama_model())
+            except Exception:
+                m = None
+            resolved_model = f"ollama:{m}" if m else (model if model != "auto" else "tiny-llama")
     elif provider == "cloud":
         # Local-only build: cloud provider is disabled
         raise typer.BadParameter("Cloud provider is disabled in local-only mode. Use --provider local and a local model (e.g., --model 'ollama:\u003cname\u003e').")
@@ -1265,8 +1314,20 @@ def doctor():
 
 
 @app.command()
-def models():
-    """List all available models."""
+def models(local: bool = typer.Option(False, "--local", help="List locally installed Ollama models")):
+    """List available models (presets) or locally installed models with --local."""
+    if local:
+        try:
+            import asyncio as _asyncio
+            from openagent.core.llm_ollama import list_ollama_models
+            names = _asyncio.get_event_loop().run_until_complete(list_ollama_models())
+        except Exception:
+            names = []
+        if names:
+            console.print(Panel("\n".join([f"• ollama:{n}" for n in names]), title="Local Ollama Models"))
+        else:
+            console.print(Panel("No local Ollama models detected. Install with 'ollama pull <model>'.", title="Local Ollama Models"))
+        return
     
     console.print(Panel(
         f"""[bold cyan]Code Models (Best for programming tasks):[/bold cyan]
