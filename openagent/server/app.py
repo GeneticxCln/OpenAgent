@@ -253,6 +253,35 @@ ws_handler = WebSocketHandler(
 )
 
 
+async def _stream_chat_response(agent: Agent, message: str):
+    """A helper generator to stream responses from an agent."""
+    llm = getattr(agent, "llm", None)
+    # Try agent-level streaming first
+    if hasattr(agent, "stream_message") and callable(getattr(agent, "stream_message")):
+        try:
+            async for token in agent.stream_message(message):
+                yield token
+            return
+        except Exception as e:
+            logger.warning(f"Agent streaming failed, falling back: {e}")
+
+    # Fallback to LLM-level streaming
+    if llm and hasattr(llm, "stream_generate") and callable(
+        getattr(llm, "stream_generate")
+    ):
+        try:
+            async for token in llm.stream_generate(message):
+                yield token
+            return
+        except Exception as e:
+            logger.warning(f"LLM streaming failed, falling back: {e}")
+
+    # Final fallback to non-streaming response
+    resp = await agent.process_message(message)
+    content = resp.content if hasattr(resp, "content") else str(resp)
+    yield content
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     """Handle WebSocket connections for real-time communication.
@@ -291,36 +320,7 @@ async def websocket_endpoint(ws: WebSocket):
                 # Start event (optional)
                 await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
 
-                # Implement inline streaming using shared generator
-                async def _stream_tokens_sse(agent_obj, message: str):
-                    llm = getattr(agent_obj, "llm", None)
-                    # True streaming via agent or provider
-                    try:
-                        if hasattr(agent_obj, "stream_message") and callable(
-                            getattr(agent_obj, "stream_message")
-                        ):
-                            async for token in agent_obj.stream_message(message):
-                                yield token
-                            return
-                    except Exception:
-                        pass
-                    try:
-                        if (
-                            llm is not None
-                            and hasattr(llm, "stream_generate")
-                            and callable(getattr(llm, "stream_generate"))
-                        ):
-                            async for token in llm.stream_generate(message):
-                                yield token
-                            return
-                    except Exception:
-                        pass
-                    # No streaming available; yield full once
-                    resp = await agent_obj.process_message(message)
-                    content = resp.content if hasattr(resp, "content") else str(resp)
-                    yield content
-
-                async for chunk in _stream_tokens_sse(
+                async for chunk in _stream_chat_response(
                     agents[agent_name], payload["message"]
                 ):
                     await ws.send_text(json.dumps({"content": chunk}))
@@ -410,35 +410,7 @@ async def websocket_chat(ws: WebSocket):
                     continue
                 await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
 
-                # Inline streaming similar to SSE path
-                async def _stream_tokens_sse(agent_obj, message: str):
-                    llm = getattr(agent_obj, "llm", None)
-                    try:
-                        if hasattr(agent_obj, "stream_message") and callable(
-                            getattr(agent_obj, "stream_message")
-                        ):
-                            async for token in agent_obj.stream_message(message):
-                                yield token
-                            return
-                    except Exception:
-                        pass
-                    try:
-                        if (
-                            llm is not None
-                            and hasattr(llm, "stream_generate")
-                            and callable(getattr(llm, "stream_generate"))
-                        ):
-                            async for token in llm.stream_generate(message):
-                                yield token
-                            return
-                    except Exception:
-                        pass
-                    # No streaming: yield full once
-                    resp = await agent_obj.process_message(message)
-                    content = resp.content if hasattr(resp, "content") else str(resp)
-                    yield content
-
-                async for chunk in _stream_tokens_sse(
+                async for chunk in _stream_chat_response(
                     agents[agent_name], payload["message"]
                 ):
                     await ws.send_text(json.dumps({"content": chunk}))
@@ -713,39 +685,11 @@ async def chat_stream(
 
     agent = agents[agent_name]
 
-    async def _stream_tokens(message: str):
-        # Try agent/LLM-native streaming if available
-        llm = getattr(agent, "llm", None)
-        try:
-            if hasattr(agent, "stream_message") and callable(
-                getattr(agent, "stream_message")
-            ):
-                async for token in agent.stream_message(message):
-                    yield token
-                return
-        except Exception:
-            pass
-        try:
-            if (
-                llm is not None
-                and hasattr(llm, "stream_generate")
-                and callable(getattr(llm, "stream_generate"))
-            ):
-                async for token in llm.stream_generate(message):
-                    yield token
-                return
-        except Exception:
-            pass
-        # No streaming available: yield full once
-        resp = await agent.process_message(message)
-        content = resp.content if hasattr(resp, "content") else str(resp)
-        yield content
-
     async def event_generator():
         try:
             # Send a start event
             yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
-            async for chunk in _stream_tokens(request.message):
+            async for chunk in _stream_chat_response(agent, request.message):
                 if not chunk:
                     continue
                 yield f"data: {json.dumps({'content': chunk})}\n\n"
