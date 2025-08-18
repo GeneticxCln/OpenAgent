@@ -7,9 +7,6 @@ on:
     branches: [ main, develop ]
   release:
     types: [ published ]
-  schedule:
-    # Run dependency updates weekly on Sundays at 2 AM UTC
-    - cron: '0 2 * * 0'
 
 env:
   PYTHON_VERSION: "3.9"
@@ -269,41 +266,3 @@ jobs:
           
           ${{ github.event.release.body }}
 
-  # 🔄 Auto-update Jobs
-  auto-update:
-    name: 🔄 Auto-update Dependencies
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-      
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        
-    - name: 🔄 Update dependencies
-      run: |
-        pip install pip-tools
-        pip-compile --upgrade requirements.in
-        pip-compile --upgrade requirements-dev.in
-        
-    - name: 📝 Create Pull Request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        commit-message: "⬆️ Update dependencies"
-        title: "⬆️ Auto-update dependencies"
-        body: |
-          ## 🔄 Automated Dependency Update
-          
-          This PR automatically updates project dependencies to their latest versions.
-          
-          ### 📋 Changes
-          - Updated all dependencies to latest compatible versions
-          - Regenerated lock files
-          
-          ### 🧪 Testing
-          All tests should pass before merging.
-        branch: auto-update-dependencies
