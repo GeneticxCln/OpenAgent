@@ -11,7 +11,15 @@ from typing import Any, Dict, List, Optional, Union
 
 from openagent.core.base import BaseAgent, BaseMessage, BaseTool, ToolResult
 from openagent.core.exceptions import AgentError, ToolError
-from openagent.core.llm import get_llm
+
+# Optional import - LLM functionality
+try:
+    from openagent.core.llm import get_llm
+    _LLM_AVAILABLE = True
+except ImportError:
+    _LLM_AVAILABLE = False
+    def get_llm(*args, **kwargs):
+        return None
 
 logger = logging.getLogger(__name__)
 
