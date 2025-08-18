@@ -8,6 +8,7 @@ processing, code generation, and intelligent agent responses.
 import asyncio
 import logging
 import os
+from threading import Thread
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import psutil
@@ -19,6 +20,7 @@ from transformers import (
     GenerationConfig,
     Pipeline,
     pipeline,
+    TextStreamer,
 )
 
 from openagent.core.exceptions import AgentError, ConfigError
@@ -32,6 +34,26 @@ except Exception:  # pragma: no cover - environments without torch
 torch = _torch  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+class AsyncQueueStreamer(TextStreamer):
+    """A custom TextStreamer that puts generated text into an asyncio.Queue."""
+
+    def __init__(
+        self,
+        queue: asyncio.Queue,
+        tokenizer: AutoTokenizer,
+        skip_prompt: bool = False,
+        **decode_kwargs,
+    ):
+        super().__init__(tokenizer, skip_prompt, **decode_kwargs)
+        self.queue = queue
+
+    def on_finalized_text(self, text: str, stream_end: bool = False):
+        """Put text into the queue. Put None at the end of the stream."""
+        self.queue.put_nowait(text)
+        if stream_end:
+            self.queue.put_nowait(None)
 
 
 class ModelConfig:
@@ -500,7 +522,7 @@ class HuggingFaceLLM:
             except Exception:
                 pass
 
-    async def stream_response(
+    async def stream_generate(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
@@ -517,17 +539,39 @@ class HuggingFaceLLM:
         Yields:
             Streaming response tokens
         """
-        # Note: True streaming requires more complex implementation
-        # For now, we'll simulate streaming by yielding the full response
-        response = await self.generate_response(
-            prompt, system_prompt=system_prompt, context=context
+        if self.model is None:
+            await self.load_model()
+
+        queue = asyncio.Queue()
+        streamer = AsyncQueueStreamer(
+            queue, self.tokenizer, skip_prompt=True, skip_special_tokens=True
         )
 
-        # Simulate streaming by yielding words
-        words = response.split()
-        for word in words:
-            yield word + " "
-            await asyncio.sleep(0.05)  # Small delay for streaming effect
+        formatted_prompt = self._format_prompt(prompt, system_prompt, context)
+        inputs = self.tokenizer(formatted_prompt, return_tensors="pt")
+        if self.device != "cpu":
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+
+        generation_kwargs = dict(
+            **inputs,
+            streamer=streamer,
+            generation_config=self.generation_config,
+            pad_token_id=self.tokenizer.pad_token_id,
+        )
+
+        # Run generation in a separate thread
+        thread = Thread(target=self.model.generate, kwargs=generation_kwargs)
+        thread.start()
+
+        # Yield tokens from the queue
+        while True:
+            token = await queue.get()
+            if token is None:
+                break
+            if token:
+                yield token
+
+        thread.join()
 
     def _format_prompt(
         self,
