@@ -9,10 +9,10 @@ description = "A modern, extensible AI agent framework for building intelligent 
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "GeneticxCln", email = "geneticxcln@example.com"}
 ]
 maintainers = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "GeneticxCln", email = "geneticxcln@example.com"}
 ]
 keywords = ["ai", "agent", "llm", "assistant", "automation"]
 classifiers = [
@@ -100,11 +100,11 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/OpenAgent"
-Documentation = "https://yourusername.github.io/OpenAgent"
-Repository = "https://github.com/yourusername/OpenAgent"
-"Bug Tracker" = "https://github.com/yourusername/OpenAgent/issues"
-Changelog = "https://github.com/yourusername/OpenAgent/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/GeneticxCln/OpenAgent"
+Documentation = "https://geneticxcln.github.io/OpenAgent"
+Repository = "https://github.com/GeneticxCln/OpenAgent"
+"Bug Tracker" = "https://github.com/GeneticxCln/OpenAgent/issues"
+Changelog = "https://github.com/GeneticxCln/OpenAgent/blob/main/CHANGELOG.md"
 
 [project.scripts]
 openagent = "openagent.cli:main"

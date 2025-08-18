@@ -6,14 +6,12 @@ pytest-timeout>=2.1.0
 pytest-mock>=3.11.0
 
 # Code Quality
-ruff>=0.1.0
-mypy>=1.5.0
-black>=23.7.0
+mypy>=1.0.0
+black>=23.0.0
 isort>=5.12.0
-flake8>=6.1.0
-pylint>=3.0.0
-bandit>=1.7.5
-safety>=2.3.5
+flake8>=6.0.0
+bandit>=1.7.0
+safety>=2.3.0
 
 # Code Analysis
 radon>=6.0.0
@@ -34,6 +32,4 @@ types-requests>=2.31.0
 types-python-dateutil>=2.8.0
 
 # Development utilities
-pre-commit>=3.4.0
-ipython>=8.15.0
-ipdb>=0.13.13
+pre-commit>=3.0.0
