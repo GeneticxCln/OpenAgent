@@ -1,0 +1,64 @@
+name: 🎨 Auto Format Code
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+
+jobs:
+  format:
+    name: 🎨 Format Code
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: 📦 Install formatting tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install black isort
+
+    - name: 🎨 Format with black
+      run: |
+        black --line-length 88 openagent/ tests/
+
+    - name: 🔄 Sort imports with isort
+      run: |
+        isort --profile black openagent/ tests/
+
+    - name: 📝 Check for changes
+      id: changes
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+        else
+          echo "changes=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 📤 Create Pull Request
+      if: steps.changes.outputs.changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "🎨 Auto-format code with black and isort"
+        title: "🎨 Auto-format code"
+        body: |
+          This PR automatically formats the codebase using:
+          - **black** for code formatting
+          - **isort** for import sorting
+
+          ## Changes
+          - Formatted Python files according to project standards
+          - Sorted imports consistently
+          - No functional changes to the code
+
+          This helps maintain code quality and consistency across the project.
+        branch: auto-format-code
+        delete-branch: true

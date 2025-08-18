@@ -78,14 +78,15 @@ jobs:
         Write-Host "`n📋 Final package list:"
         pip list
         
-    - name: 🔍 Run linting
+    - name: 🔍 Run linting (non-blocking)
       run: |
-        echo "Running flake8..."
-        flake8 openagent tests --count --select=E9,F63,F7,F82 --show-source --statistics || echo "❌ flake8 failed"
-        echo "Running black check..."
-        black --check openagent tests || echo "❌ black check failed"
-        echo "Running isort check..."
-        isort --check-only openagent tests || echo "❌ isort check failed"
+        echo "Running flake8 (critical errors only)..."
+        flake8 openagent tests --count --select=E9,F63,F7,F82 --show-source --statistics || echo "⚠️ flake8 found some issues (non-blocking)"
+        echo "Checking black formatting..."
+        black --check --diff openagent tests || echo "⚠️ black formatting issues found (non-blocking)"
+        echo "Checking import sorting..."
+        isort --check-only --diff openagent tests || echo "⚠️ import sorting issues found (non-blocking)"
+        echo "✅ Linting checks completed (issues are non-blocking)"
         
     - name: 🛡️ Run security checks
       run: |
