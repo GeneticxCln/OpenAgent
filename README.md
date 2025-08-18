@@ -15,31 +15,38 @@ A powerful, production-ready AI agent framework powered by Hugging Face models, 
 
 ## 🏁 Quick Start
 
-### 1. Clone and Setup
+### 1. Basic Installation
+
+```bash
+# Install core OpenAgent (lightweight)
+pip install openagent
+```
+
+### 2. Install ML Features (for LLM integration)
+
+```bash
+# Install OpenAgent with ML capabilities
+pip install openagent[ml]
+
+# Or for full installation with all features
+pip install openagent[all]
+```
+
+### 3. Development Setup
 
 ```bash
 git clone https://github.com/yourusername/OpenAgent.git
 cd OpenAgent
 
-# Create virtual environment (already created)
-# python -m venv venv
-source venv/bin/activate
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install in development mode
-pip install -e .
+# Install in development mode with all dependencies
+pip install -e ".[all]"
 ```
 
-### 2. Install PyTorch (if not already installed)
-
-```bash
-# For CUDA (if you have a GPU)
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# For CPU only
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
-
-### 3. Start Chatting
+### 4. Start Chatting
 
 ```bash
 # Interactive chat with lightweight model
@@ -52,7 +59,7 @@ openagent chat --model codellama-7b
 openagent chat --model tiny-llama --device cpu
 ```
 
-### 4. Run API Server (alpha)
+### 5. Run API Server (alpha)
 
 The HTTP and WebSocket server are available for experimentation.
 
