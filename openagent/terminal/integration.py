@@ -1,5 +1,19 @@
+import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
+
+try:
+    from openagent.core.command_intelligence import (
+        CommandCompletionEngine,
+        CompletionContext,
+        create_command_completion_engine
+    )
+    from openagent.core.command_templates import CommandTemplates, create_command_templates
+    from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+    from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+    INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    INTELLIGENCE_AVAILABLE = False
 
 
 def zsh_integration_snippet() -> str:
@@ -184,17 +198,177 @@ fi
 """
 
 
+def enhanced_zsh_integration_snippet() -> str:
+    """
+    Return an enhanced zsh snippet with command completion and intelligence features.
+    
+    Features:
+    - Command completion with Tab
+    - Smart suggestions with Ctrl-S
+    - Template recommendations with Ctrl-T
+    - All existing policy and explanation features
+    """
+    base_snippet = zsh_integration_snippet()
+    
+    enhanced_features = r"""
+# Enhanced OpenAgent features (command completion and intelligence)
+if [[ -n "$ZSH_VERSION" && -o interactive && $+functions[zle] -gt 0 ]]; then
+  
+  # Command completion with Tab (enhanced)
+  function _openagent_complete() {
+    local cmd=${BUFFER}
+    local suggestions
+    suggestions=$(command openagent complete "$cmd" --max=10 2>/dev/null)
+    if [[ -n "$suggestions" ]]; then
+      # Parse suggestions and show them
+      local IFS=$'\n'
+      local -a completion_list
+      completion_list=(${=suggestions})
+      if [[ ${#completion_list[@]} -gt 0 ]]; then
+        zle -M "Suggestions: ${completion_list[1]}"
+        # Replace buffer with first suggestion
+        BUFFER="${completion_list[1]}"
+        CURSOR=${#BUFFER}
+      fi
+    fi
+    zle redisplay
+  }
+  zle -N _openagent_complete
+  bindkey '^I' _openagent_complete  # Tab
+  
+  # Smart suggestions with Ctrl-S
+  function _openagent_smart_suggest() {
+    local cmd=${BUFFER}
+    if [[ -z "$cmd" ]]; then
+      # Show context-aware suggestions for empty buffer
+      local context_suggestions
+      context_suggestions=$(command openagent suggest-context 2>/dev/null)
+      if [[ -n "$context_suggestions" ]]; then
+        zle -M "Context suggestions: $context_suggestions"
+      else
+        zle -M "OpenAgent: Type a command for smart suggestions"
+      fi
+    else
+      # Show suggestions for partial command
+      local suggestions
+      suggestions=$(command openagent suggest "$cmd" --intelligent 2>/dev/null)
+      if [[ -n "$suggestions" ]]; then
+        zle -M "Smart suggestions: $suggestions"
+      fi
+    fi
+    zle redisplay
+  }
+  zle -N _openagent_smart_suggest
+  bindkey '^S' _openagent_smart_suggest
+  
+  # Template recommendations with Ctrl-T
+  function _openagent_templates() {
+    local templates
+    templates=$(command openagent templates --suggest --current-dir="$PWD" 2>/dev/null)
+    if [[ -n "$templates" ]]; then
+      zle -M "Available templates: $templates"
+      # Could implement template selection here
+    else
+      zle -M "OpenAgent: No templates available for current context"
+    fi
+    zle redisplay
+  }
+  zle -N _openagent_templates
+  bindkey '^T' _openagent_templates
+  
+  # Auto-correction on Enter (if enabled)
+  if [[ -n "$OPENAGENT_AUTO_CORRECT" ]]; then
+    function _openagent_auto_correct() {
+      local cmd=${BUFFER}
+      if [[ -n "$cmd" ]]; then
+        local corrected
+        corrected=$(command openagent correct "$cmd" 2>/dev/null)
+        if [[ -n "$corrected" && "$corrected" != "$cmd" ]]; then
+          zle -M "Auto-corrected: $cmd -> $corrected"
+          BUFFER="$corrected"
+          CURSOR=${#BUFFER}
+        fi
+      fi
+      zle accept-line
+    }
+    zle -N _openagent_auto_correct
+    bindkey '^M' _openagent_auto_correct  # Enter
+  fi
+  
+fi
+"""
+    
+    # Insert enhanced features before the end marker
+    return base_snippet.replace(
+        "# --- OpenAgent zsh integration end ---",
+        enhanced_features + "# --- OpenAgent zsh integration end ---"
+    )
+
+
+def enhanced_bash_integration_snippet() -> str:
+    """
+    Return an enhanced bash snippet with basic command intelligence features.
+    
+    Note: Bash has more limited capabilities than zsh for interactive features.
+    """
+    base_snippet = bash_integration_snippet()
+    
+    enhanced_features = r"""
+# Enhanced OpenAgent features for bash (limited)
+if _openagent_is_interactive; then
+  
+  # Command completion function (can be bound to keys)
+  _openagent_bash_complete() {
+    local cmd="$1"
+    local suggestions
+    suggestions=$(command openagent complete "$cmd" --max=5 2>/dev/null)
+    if [[ -n "$suggestions" ]]; then
+      echo "[OpenAgent] Suggestions: $suggestions" >&2
+    fi
+  }
+  
+  # Template suggestions function
+  _openagent_bash_templates() {
+    local templates
+    templates=$(command openagent templates --suggest --current-dir="$PWD" 2>/dev/null)
+    if [[ -n "$templates" ]]; then
+      echo "[OpenAgent] Templates: $templates" >&2
+    fi
+  }
+  
+  # Add to PROMPT_COMMAND for basic intelligence
+  if [[ -n "$OPENAGENT_SMART_PROMPT" ]]; then
+    _openagent_smart_prompt() {
+      # Show context info in prompt (very basic)
+      local context_info
+      context_info=$(command openagent context-info --brief 2>/dev/null)
+      if [[ -n "$context_info" ]]; then
+        PS1="[OA: $context_info] $PS1"
+      fi
+    }
+    PROMPT_COMMAND="_openagent_smart_prompt; $PROMPT_COMMAND"
+  fi
+  
+fi
+"""
+    
+    return base_snippet.replace(
+        "# --- OpenAgent bash integration end ---",
+        enhanced_features + "# --- OpenAgent bash integration end ---"
+    )
+
+
 def install_snippet(
-    shell: Literal["zsh", "bash"], apply: bool = False
+    shell: Literal["zsh", "bash"], apply: bool = False, enhanced: bool = False
 ) -> tuple[Path, str]:
     """Return (path, snippet). If apply=True, append to shell rc file."""
     if shell == "zsh":
-        snippet = zsh_integration_snippet()
+        snippet = enhanced_zsh_integration_snippet() if enhanced else zsh_integration_snippet()
         rc_path = Path.home() / ".zshrc"
         marker_start = "# --- OpenAgent zsh integration start ---"
         marker_end = "# --- OpenAgent zsh integration end ---"
     elif shell == "bash":
-        snippet = bash_integration_snippet()
+        snippet = enhanced_bash_integration_snippet() if enhanced else bash_integration_snippet()
         rc_path = Path.home() / ".bashrc"
         marker_start = "# --- OpenAgent bash integration start ---"
         marker_end = "# --- OpenAgent bash integration end ---"
@@ -219,3 +393,120 @@ def install_snippet(
             )
         rc_path.write_text(new_text)
     return rc_path, snippet
+
+
+def create_completion_context() -> Optional[CompletionContext]:
+    """
+    Create a completion context for the current terminal session.
+    
+    Returns:
+        CompletionContext if intelligence systems are available, None otherwise
+    """
+    if not INTELLIGENCE_AVAILABLE:
+        return None
+    
+    from openagent.core.context_v2.project_analyzer import ProjectType
+    
+    try:
+        current_dir = Path.cwd()
+        
+        # Detect project type
+        project_engine = ProjectContextEngine()
+        workspace = project_engine.analyze_workspace(current_dir)
+        
+        # Get environment variables
+        env_vars = dict(os.environ)
+        
+        # Create completion context
+        context = CompletionContext(
+            current_directory=current_dir,
+            project_type=workspace.project_type if workspace else None,
+            git_repo=workspace.git_context.is_repo if workspace else False,
+            git_branch=workspace.git_context.current_branch if workspace else None,
+            recent_commands=[],  # Would need to load from history
+            environment_vars=env_vars
+        )
+        
+        return context
+    except Exception:
+        return None
+
+
+def get_command_suggestions(partial_command: str, max_suggestions: int = 10) -> list[str]:
+    """
+    Get command suggestions for a partial command.
+    
+    Args:
+        partial_command: Partial command input
+        max_suggestions: Maximum number of suggestions to return
+        
+    Returns:
+        List of command suggestions
+    """
+    if not INTELLIGENCE_AVAILABLE:
+        return []
+    
+    try:
+        context = create_completion_context()
+        if not context:
+            return []
+        
+        completion_engine = create_command_completion_engine()
+        suggestions = completion_engine.suggest_commands(partial_command, context, max_suggestions)
+        
+        return [s.text for s in suggestions]
+    except Exception:
+        return []
+
+
+def get_template_suggestions(current_dir: Optional[Path] = None) -> list[str]:
+    """
+    Get template suggestions for the current context.
+    
+    Args:
+        current_dir: Current directory (defaults to cwd)
+        
+    Returns:
+        List of template names
+    """
+    if not INTELLIGENCE_AVAILABLE:
+        return []
+    
+    try:
+        if current_dir is None:
+            current_dir = Path.cwd()
+        
+        # Get workspace context
+        project_engine = ProjectContextEngine()
+        workspace = project_engine.analyze_workspace(current_dir)
+        
+        if not workspace:
+            return []
+        
+        # Get template suggestions
+        templates = create_command_templates()
+        suggestions = templates.suggest_templates(workspace)
+        
+        return [t.name for t in suggestions]
+    except Exception:
+        return []
+
+
+def auto_correct_command(command: str) -> Optional[str]:
+    """
+    Auto-correct a command if possible.
+    
+    Args:
+        command: Command to correct
+        
+    Returns:
+        Corrected command if correction found, None otherwise
+    """
+    if not INTELLIGENCE_AVAILABLE:
+        return None
+    
+    try:
+        completion_engine = create_command_completion_engine()
+        return completion_engine.auto_correct_command(command)
+    except Exception:
+        return None
