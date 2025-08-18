@@ -12,16 +12,37 @@ from threading import Thread
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 import psutil
-from huggingface_hub import HfApi, login
-from transformers import (
-    AutoModelForCausalLM,
-    AutoModelForSeq2SeqLM,
-    AutoTokenizer,
-    GenerationConfig,
-    Pipeline,
-    pipeline,
-    TextStreamer,
-)
+
+# Optional ML dependencies - don't fail if not available
+try:
+    from huggingface_hub import HfApi, login
+    HF_AVAILABLE = True
+except ImportError:
+    HfApi = None
+    login = None
+    HF_AVAILABLE = False
+
+try:
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoModelForSeq2SeqLM,
+        AutoTokenizer,
+        GenerationConfig,
+        Pipeline,
+        pipeline,
+        TextStreamer,
+    )
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    # Create mock classes for when transformers isn't available
+    AutoModelForCausalLM = None
+    AutoModelForSeq2SeqLM = None
+    AutoTokenizer = None
+    GenerationConfig = None
+    Pipeline = None
+    pipeline = None
+    TextStreamer = object  # Provide a base class for inheritance
+    TRANSFORMERS_AVAILABLE = False
 
 from openagent.core.exceptions import AgentError, ConfigError
 
@@ -124,8 +145,13 @@ class HuggingFaceLLM:
             repetition_penalty: Repetition penalty
             hf_token: Hugging Face API token
             load_in_8bit: Load model in 8-bit precision
-            load_in_4bit: Load model in 4-bit precision
+            load_in_4bit: Load model in 4bit precision
         """
+        # Check if required dependencies are available
+        if not HF_AVAILABLE:
+            raise ImportError("huggingface_hub is required but not installed. Install with: pip install huggingface_hub")
+        if not TRANSFORMERS_AVAILABLE:
+            raise ImportError("transformers is required but not installed. Install with: pip install transformers")
         self.model_name = model_name
         self.max_length = max_length
         self.temperature = temperature
@@ -772,26 +798,38 @@ def get_llm(model_name: str = "codellama-7b", **kwargs):
     Routing rules (local-only):
     - model_name startswith 'ollama:': use Ollama provider (local)
     - otherwise: use Hugging Face provider (local)
+    
+    Returns None if dependencies are not available, allowing graceful degradation.
     """
     global llm
+    
     if model_name and (model_name == "ollama" or model_name.startswith("ollama:")):
-        from .llm_ollama import OllamaLLM, get_default_ollama_model
+        try:
+            from .llm_ollama import OllamaLLM, get_default_ollama_model
 
-        # Resolve base tag
-        base = None
-        if model_name == "ollama":
-            # Try to auto-pick first installed model
-            try:
-                base = asyncio.get_event_loop().run_until_complete(
-                    get_default_ollama_model()
-                )
-            except Exception:
-                base = None
-        else:
-            base = model_name.split(":", 1)[1] or None
-        base = base or "llama3"
-        return OllamaLLM(model_name=base, **kwargs)
+            # Resolve base tag
+            base = None
+            if model_name == "ollama":
+                # Try to auto-pick first installed model
+                try:
+                    base = asyncio.get_event_loop().run_until_complete(
+                        get_default_ollama_model()
+                    )
+                except Exception:
+                    base = None
+            else:
+                base = model_name.split(":", 1)[1] or None
+            base = base or "llama3"
+            return OllamaLLM(model_name=base, **kwargs)
+        except ImportError as e:
+            logger.warning(f"Ollama LLM not available: {e}")
+            return None
+    
     # Default HF path
-    if llm is None or getattr(llm, "model_name", None) != model_name:
-        llm = HuggingFaceLLM(model_name=model_name, **kwargs)
-    return llm
+    try:
+        if llm is None or getattr(llm, "model_name", None) != model_name:
+            llm = HuggingFaceLLM(model_name=model_name, **kwargs)
+        return llm
+    except ImportError as e:
+        logger.warning(f"HuggingFace LLM not available: {e}")
+        return None
