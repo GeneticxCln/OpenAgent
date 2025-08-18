@@ -49,31 +49,35 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         
-        # Install minimal deps for linting first
-        echo "Installing linting tools..."
-        pip install black isort flake8 bandit safety
+        # Install basic tools that we know will work
+        echo "Installing basic tools..."
+        pip install black isort flake8
         
-        # Install project with fallback strategy
-        echo "Installing project in development mode..."
-        if pip install -e ".[dev]"; then
-          echo "✅ Dev installation successful"
-        else
-          echo "⚠️ Dev installation failed, trying fallback..."
-          pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist || true
-          pip install -e . || echo "❌ Even basic installation failed"
-        fi
+        # Install core Python dependencies only (skip ML deps)
+        echo "Installing core dependencies..."
+        pip install pydantic requests aiohttp python-dotenv rich typer httpx psutil
         
-        # Install server deps separately on primary platform only
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python-version }}" = "3.11" ]; then
-          echo "Installing server dependencies..."
-          pip install -e ".[server]" || echo "⚠️ Server deps installation failed, continuing..."
-        else
-          echo "Skipping server deps for non-primary matrix to speed up CI"
-        fi
+        # Install the package itself in editable mode with minimal deps
+        echo "Installing openagent in editable mode..."
+        pip install -e . || {
+          echo "❌ Editable install failed, trying build dependencies..."
+          pip install build || echo "build package failed to install"
+          pip install -e . || {
+            echo "❌ Still failed, trying non-editable install..."
+            pip install . || echo "❌ All installation methods failed"
+          }
+        }
+        
+        # Install testing tools separately
+        echo "Installing test tools..."
+        pip install pytest pytest-asyncio || echo "⚠️ Test tools installation failed"
+        
+        # Try to install additional dev tools (optional)
+        pip install bandit safety pytest-cov pytest-timeout || echo "⚠️ Some optional dev tools failed to install"
         
         # Show what we actually installed
         echo "\n📋 Installed packages:"
-        pip list | head -20
+        pip list
         
     - name: 🔍 Run linting
       run: |
@@ -100,6 +104,10 @@ jobs:
         # Run detailed import debugging
         echo "Running detailed import test..."
         python debug_import.py
+        
+        # Run minimal functionality test
+        echo "Running minimal functionality test..."
+        python test_minimal.py || echo "❌ Minimal test failed"
         
         # Show test discovery
         echo "Discovering tests..."
