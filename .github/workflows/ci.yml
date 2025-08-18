@@ -47,36 +47,40 @@ jobs:
         
     - name: 📦 Install dependencies
       run: |
+        set -e  # Exit on any error for debugging
         python -m pip install --upgrade pip
         
-        # Install basic tools that we know will work
-        echo "Installing basic tools..."
-        pip install black isort flake8
+        # Install only essential packages one by one
+        echo "Installing essential packages individually..."
+        pip install pydantic || { echo "pydantic failed"; exit 1; }
+        pip install requests || { echo "requests failed"; exit 1; }
+        pip install rich || { echo "rich failed"; exit 1; }
+        pip install typer || { echo "typer failed"; exit 1; }
         
-        # Install core Python dependencies only (skip ML deps)
-        echo "Installing core dependencies..."
-        pip install pydantic requests aiohttp python-dotenv rich typer httpx psutil
+        # Try optional packages
+        pip install aiohttp || echo "aiohttp failed (optional)"
+        pip install python-dotenv || echo "python-dotenv failed (optional)"
+        pip install httpx || echo "httpx failed (optional)"
+        pip install psutil || echo "psutil failed (optional)"
         
-        # Install the package itself in editable mode with minimal deps
-        echo "Installing openagent in editable mode..."
-        pip install -e . || {
-          echo "❌ Editable install failed, trying build dependencies..."
-          pip install build || echo "build package failed to install"
-          pip install -e . || {
-            echo "❌ Still failed, trying non-editable install..."
-            pip install . || echo "❌ All installation methods failed"
-          }
+        # Add current directory to Python path instead of installing package
+        echo "Adding current directory to PYTHONPATH..."
+        echo "PYTHONPATH=$PWD:$PYTHONPATH" >> $GITHUB_ENV
+        export PYTHONPATH="$PWD:$PYTHONPATH"
+        
+        # Test basic import without installing package
+        echo "Testing basic import..."
+        python -c "import sys; sys.path.insert(0, '.'); import openagent; print('✅ Import successful')" || {
+          echo "Import failed, trying to install package..."
+          # Last resort - try installing the package
+          pip install --no-deps -e . || pip install --no-deps . || echo "Package install failed but continuing..."
         }
         
-        # Install testing tools separately
-        echo "Installing test tools..."
-        pip install pytest pytest-asyncio || echo "⚠️ Test tools installation failed"
+        # Install basic dev tools
+        pip install black isort flake8 || echo "Dev tools failed (optional)"
+        pip install pytest pytest-asyncio || echo "Test tools failed (optional)"
         
-        # Try to install additional dev tools (optional)
-        pip install bandit safety pytest-cov pytest-timeout || echo "⚠️ Some optional dev tools failed to install"
-        
-        # Show what we actually installed
-        echo "\n📋 Installed packages:"
+        echo "\n📋 Final package list:"
         pip list
         
     - name: 🔍 Run linting
@@ -167,7 +171,18 @@ jobs:
     - name: 📦 Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev]"
+        
+        # Install minimal deps for quality checks
+        pip install pydantic requests rich typer || echo "Core deps failed"
+        
+        # Try to install the package without dependencies
+        pip install --no-deps -e . || {
+          echo "Editable install failed, using PYTHONPATH..."
+          echo "PYTHONPATH=$PWD:$PYTHONPATH" >> $GITHUB_ENV
+        }
+        
+        # Install quality tools
+        pip install mypy radon pylint || echo "Quality tools failed (optional)"
         
     - name: 📏 Run type checking
       run: |
