@@ -22,18 +22,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           
-          # Install basic dev tools first
-          echo "📦 Installing basic development tools..."
-          pip install black isort flake8 pytest
+          # Install the package with only core dependencies (no ML extras)
+          echo "📦 Installing OpenAgent core package..."
+          pip install -e . || { echo "❌ Core package install failed"; exit 1; }
           
-          # Try to install project deps with better error reporting
-          echo "📦 Installing project in development mode..."
-          if pip install -e .[dev]; then
-            echo "✅ Dev installation successful"
-          else
-            echo "⚠️ Dev installation failed, using minimal setup"
-            pip install -e . || echo "❌ Even basic installation failed"
-          fi
+          # Install basic dev tools
+          echo "📦 Installing development tools..."
+          pip install black isort flake8 pytest || echo "⚠️ Some dev tools failed to install"
           
           # Check import capability
           echo "🔍 Testing import..."
