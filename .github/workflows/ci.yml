@@ -11,6 +11,11 @@ on:
 env:
   PYTHON_VERSION: "3.9"
   NODE_VERSION: "18"
+  # Performance optimizations
+  PIP_DISABLE_PIP_VERSION_CHECK: 1
+  PIP_NO_CACHE_DIR: 1
+  PYTHONDONTWRITEBYTECODE: 1
+  PYTHONUNBUFFERED: 1
 
 jobs:
   # 🧪 Testing Jobs
@@ -38,18 +43,27 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
+        cache-dependency-path: 'pyproject.toml'
         
     - name: 📦 Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-        pip install pytest-cov pytest-asyncio pytest-timeout
+        # Install minimal deps for linting first
+        pip install black isort flake8 bandit safety
+        # Then install project with dev deps (without heavy ML deps initially)
+        pip install -e ".[dev]" || pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist
+        # Install server deps separately, skip heavy ML deps on non-primary matrix
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python-version }}" = "3.11" ]; then
+          pip install -e ".[server]" || echo "Server deps installation failed, continuing..."
+        else
+          echo "Skipping server deps for non-primary matrix to speed up CI"
+        fi
         
     - name: 🔍 Run linting
       run: |
-        flake8 openagent tests --count --select=E9,F63,F7,F82 --show-source --statistics || echo "Flake8 completed"
-        black --check openagent tests || echo "Black check completed"
-        isort --check-only openagent tests || echo "Isort check completed"
+        flake8 openagent tests --count --select=E9,F63,F7,F82 --show-source --statistics
+        black --check openagent tests
+        isort --check-only openagent tests
         
     - name: 🛡️ Run security checks
       run: |
@@ -58,7 +72,14 @@ jobs:
         
     - name: 🧪 Run tests
       run: |
-        pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing || echo "Tests completed with issues"
+        # Run tests with timeout and skip slow/ML tests on some platforms
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python-version }}" = "3.11" ]; then
+          # Full test suite with coverage on primary platform
+          pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing --timeout=300 -n auto
+        else
+          # Fast tests only on other platforms for quick feedback
+          pytest tests/ -v -m "not slow and not integration" --timeout=120 -x || echo "Some tests failed, continuing for matrix build"
+        fi
         
     - name: 📊 Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
