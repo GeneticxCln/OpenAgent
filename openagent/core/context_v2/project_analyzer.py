@@ -9,10 +9,12 @@ import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
-
+import asyncio
+import json
+import subprocess
+import time
 
 class ProjectType(Enum):
     """Supported project types for context-aware assistance."""
