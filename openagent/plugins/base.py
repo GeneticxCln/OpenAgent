@@ -410,18 +410,23 @@ class BasePlugin(PluginBase):
             "plugin_name", self.__class__.__name__.lower()
         )
         self.enabled: bool = self._config.enabled
-        self.config: Dict[str, Any] = self._config.config or {}
+        # Avoid clashing with PluginBase.config property (PluginConfig)
+        self.legacy_config: Dict[str, Any] = self._config.config or {}
 
-    # Legacy abstract properties expected by tests
+    # Legacy properties expected by tests; default to class decorator metadata
     @property
-    @abc.abstractmethod
-    def version(self) -> str:  # pragma: no cover - abstract
-        pass
+    def version(self) -> str:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if meta and getattr(meta, "version", None):
+            return meta.version
+        return str(self.legacy_config.get("version", "0.0.0"))
 
     @property
-    @abc.abstractmethod
-    def description(self) -> str:  # pragma: no cover - abstract
-        pass
+    def description(self) -> str:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if meta and getattr(meta, "description", None):
+            return meta.description
+        return str(self.legacy_config.get("description", ""))
 
     # Legacy lifecycle method name mapping
     async def shutdown(self) -> None:  # pragma: no cover - usually overridden
@@ -429,11 +434,31 @@ class BasePlugin(PluginBase):
 
     # Provide default metadata implementation so tests need not implement it
     def get_metadata(self) -> PluginMetadata:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if isinstance(meta, PluginMetadata):
+            # Return the decorated metadata, ensuring name matches instance name
+            return PluginMetadata(
+                name=self.name,
+                version=meta.version,
+                description=meta.description,
+                author=meta.author,
+                plugin_type=meta.plugin_type,
+                dependencies=meta.dependencies,
+                openagent_version=meta.openagent_version,
+                python_version=meta.python_version,
+                config_schema=meta.config_schema,
+                permissions=meta.permissions,
+                homepage=meta.homepage,
+                repository=meta.repository,
+                license=meta.license,
+                keywords=meta.keywords,
+            )
+        # Fallback if decorator not used
         return PluginMetadata(
             name=self.name,
             version=self.version,
             description=self.description,
-            author=self.config.get("author", "unknown"),
+            author=self.legacy_config.get("author", "unknown"),
             plugin_type=PluginType.CUSTOM,
         )
 

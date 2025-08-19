@@ -33,6 +33,14 @@ class RiskLevel(Enum):
     BLOCKED = "blocked"
 
 
+# Compatibility shim for legacy tests expecting a separate PolicyAction enum
+class PolicyAction(Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    EXPLAIN_ONLY = "explain_only"
+
+
 class PolicyDecision(Enum):
     """Policy decisions for command execution."""
 

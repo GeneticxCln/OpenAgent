@@ -378,7 +378,12 @@ def mock_external_deps(monkeypatch):
     mock_requests = Mock()
     mock_requests.get = Mock(return_value=Mock(status_code=200, json=lambda: {}))
     mock_requests.post = Mock(return_value=Mock(status_code=200, json=lambda: {}))
-    monkeypatch.setattr("requests", mock_requests, raising=False)
+    try:
+        import requests as _requests
+        monkeypatch.setattr(_requests, "get", mock_requests.get, raising=False)
+        monkeypatch.setattr(_requests, "post", mock_requests.post, raising=False)
+    except Exception:
+        pass
     
     # Mock subprocess calls (unless explicitly testing them)
     if not os.getenv("OPENAGENT_TEST_REAL_SUBPROCESS"):

@@ -8,9 +8,9 @@ management, and execution of custom tools and extensions.
 from .base import PluginBase, PluginMetadata, PluginStatus, PluginType
 from .loader import PluginLoader
 from .manager import PluginManager
-from .marketplace import PluginMarketplace
 from .registry import PluginRegistry
 from .validator import PluginValidator
+from .marketplace import PluginMarketplace
 
 __all__ = [
     "PluginBase",

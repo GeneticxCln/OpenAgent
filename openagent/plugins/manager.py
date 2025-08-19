@@ -83,6 +83,25 @@ class PluginManager:
             f"PluginManager initialized with plugin directory: {self.plugin_dir}"
         )
 
+    def on(self, event: str, handler: Callable) -> None:
+        """Register an event handler for a given event name."""
+        self._event_handlers.setdefault(event, []).append(handler)
+
+    async def _emit_event(self, event: str, **kwargs: Any) -> None:
+        """Emit an event to all registered handlers. Best-effort, never throws."""
+        handlers = list(self._event_handlers.get(event, []))
+        for h in handlers:
+            try:
+                if asyncio.iscoroutinefunction(h):
+                    await h(**kwargs)
+                else:
+                    # Execute sync handler in default loop executor to avoid blocking
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, lambda: h(**kwargs))
+            except Exception:
+                # Never fail manager operations due to handler errors
+                continue
+
     async def initialize(self) -> None:
         """Initialize the plugin manager and discover plugins."""
         if self._is_initialized:
@@ -381,8 +400,7 @@ class PluginManager:
             logger.error(f"Error enabling plugin {plugin_name}: {e}")
             plugin._set_status(PluginStatus.ERROR, e)
             return False
-
-    async def disable_plugin(self, plugin_name: str) - 3e bool:
+    async def disable_plugin(self, plugin_name: str) -> bool:
         """Disable an active plugin."""
         if plugin_name not in self._plugins:
             logger.error(f"Plugin {plugin_name} is not loaded")
@@ -434,7 +452,7 @@ class PluginManager:
 
     async def execute_plugin(
         self, plugin_name: str, *args, timeout: Optional[float] = None, **kwargs
-    ) - 3e Any:
+    ) -> Any:
         """Execute a plugin with timeout and error handling."""
         if plugin_name not in self._plugins:
             raise ValueError(f"Plugin {plugin_name} is not loaded")
@@ -516,261 +534,7 @@ class PluginManager:
             if plugin.metadata.plugin_type == plugin_type
         ]
 
-    async def health_check(self) -> Dict[str, Any]:
-        """Perform health check on all plugins."""
-        health_status = {
-            "manager_status": "healthy" if self._is_initialized else "unhealthy",
-            "total_plugins": len(self._plugins),
-            "healthy_plugins": 0,
-            "unhealthy_plugins": 0,
-            "plugin_statuses": {},
-        }
-
-        for plugin_name, plugin in self._plugins.items():
-            try:
-                is_healthy = await plugin.health_check()
-                health_status["plugin_statuses"][plugin_name] = {
-                    "healthy": is_healthy,
-                    "status": plugin.status.value,
-                    "last_error": str(plugin.error) if plugin.error else None,
-                }
-
-                if is_healthy:
-                    health_status["healthy_plugins"] += 1
-                else:
-                    health_status["unhealthy_plugins"] += 1
-
-            except Exception as e:
-                health_status["plugin_statuses"][plugin_name] = {
-                    "healthy": False,
-                    "status": "error",
-                    "last_error": str(e),
-                }
-                health_status["unhealthy_plugins"] += 1
-
-        return health_status
-
-    async def reload_plugin(self, plugin_name: str) - 3e bool:
-        """Reload a plugin (unload and load again)."""
-        logger.info(f"Reloading plugin: {plugin_name}")
-
-        # Store current config
-        current_config = None
-        if plugin_name in self._plugins:
-            current_config = self._plugins[plugin_name].config.dict()
-
-        # Unload plugin
-        if not await self.unload_plugin(plugin_name):
-            return False
-
-        # Load plugin again
-        return await self.load_plugin(plugin_name, current_config)
-
-    async def load_all_plugins(self) -> Dict[str, bool]:
-        """Load all discovered plugins."""
-        logger.info("Loading all discovered plugins")
-
-        results = {}
-        plugins = await self.registry.list_plugins()
-
-        for plugin_name in plugins:
-            results[plugin_name] = await self.load_plugin(plugin_name)
-
-        loaded_count = sum(1 for success in results.values() if success)
-        logger.info(f"Loaded {loaded_count}/{len(results)} plugins")
-
-        return results
-
-    async def unload_all_plugins(self) -> Dict[str, bool]:
-        """Unload all loaded plugins."""
-        logger.info("Unloading all plugins")
-
-        results = {}
-        plugin_names = list(self._plugins.keys())
-
-        for plugin_name in plugin_names:
-            results[plugin_name] = await self.unload_plugin(plugin_name)
-
-        return results
-
-    # Messaging API
-    def subscribe(self, topic: str, handler: Callable[[str, Dict[str, Any]], Any]) - 3e None:
-        """Subscribe a handler to a topic on the internal message bus."""
-        self._message_subscribers.setdefault(topic, []).append(handler)
-
-    def unsubscribe(self, topic: str, handler: Callable[[str, Dict[str, Any]], Any]) - 3e None:
-        """Unsubscribe a handler from a topic."""
-        if topic in self._message_subscribers:
-            try:
-                self._message_subscribers[topic].remove(handler)
-            except ValueError:
-                pass
-
-    async def publish(self, topic: str, message: Dict[str, Any]) - 3e None:
-        """Publish a message to all subscribers of a topic."""
-        for handler in self._message_subscribers.get(topic, []):
-            try:
-                if asyncio.iscoroutinefunction(handler):
-                    await handler(topic, message)
-                else:
-                    handler(topic, message)
-            except Exception as e:
-                logger.error(f"Error in message handler for topic {topic}: {e}")
-
-    async def send_to(self, plugin_name: str, message: Dict[str, Any]) - 3e None:
-        """Send a direct message to a specific plugin if it exposes on_message()."""
-        plugin = await self.get_plugin(plugin_name)
-        if not plugin:
-            logger.warning(f"send_to: plugin {plugin_name} not found")
-            return
-        on_message = getattr(plugin, "on_message", None)
-        if not on_message:
-            logger.debug(f"Plugin {plugin_name} has no on_message handler")
-            return
-        try:
-            if asyncio.iscoroutinefunction(on_message):
-                await on_message(message)
-            else:
-                on_message(message)
-        except Exception as e:
-            logger.error(f"Error delivering message to {plugin_name}: {e}")
-
-    # Event system
-    def on(self, event: str, handler: Callable) - 3e None:
-        """Register an event handler."""
-        if event not in self._event_handlers:
-            self._event_handlers[event] = []
-        self._event_handlers[event].append(handler)
-
-    def off(self, event: str, handler: Callable) -> None:
-        """Unregister an event handler."""
-        if event in self._event_handlers:
-            try:
-                self._event_handlers[event].remove(handler)
-            except ValueError:
-                pass
-
-    async def _emit_event(self, event: str, **kwargs) - 3e None:
-        """Emit an event to all registered handlers."""
-        if event in self._event_handlers:
-            for handler in self._event_handlers[event]:
-                try:
-                    if asyncio.iscoroutinefunction(handler):
-                        await handler(event, **kwargs)
-                    else:
-                        handler(event, **kwargs)
-                except Exception as e:
-                    logger.error(f"Error in event handler for {event}: {e}")
-
-    # Private methods
-    async def _load_plugin_configs(self) - 3e None:
-        """Load plugin configurations from files."""
-        # Load central JSON or YAML config
-        config_json = self.plugin_dir / "config.json"
-        config_yaml = self.plugin_dir / "config.yaml"
-
-        if config_json.exists():
-            try:
-                with open(config_json, "r") as f:
-                    self._plugin_configs = json.load(f)
-                logger.info(f"Loaded plugin configurations from {config_json}")
-            except Exception as e:
-                logger.error(f"Error loading plugin configurations: {e}")
-        elif config_yaml.exists():
-            try:
-                import yaml  # type: ignore
-
-                with open(config_yaml, "r") as f:
-                    self._plugin_configs = yaml.safe_load(f) or {}
-                logger.info(f"Loaded plugin configurations from {config_yaml}")
-            except Exception as e:
-                logger.error(f"Error loading YAML plugin configurations: {e}")
-
-        # Overlay per-plugin plugin.yaml or plugin.json next to code
-        try:
-            for item in self.plugin_dir.iterdir():
-                plugin_name = None
-                plugin_conf: Optional[Dict[str, Any]] = None
-                if item.is_dir():
-                    y = item / "plugin.yaml"
-                    j = item / "plugin.json"
-                    if y.exists():
-                        try:
-                            import yaml  # type: ignore
-                            with open(y, "r") as f:
-                                plugin_conf = yaml.safe_load(f) or {}
-                        except Exception as e:
-                            logger.warning(f"Failed to load {y}: {e}")
-                    elif j.exists():
-                        try:
-                            with open(j, "r") as f:
-                                plugin_conf = json.load(f)
-                        except Exception as e:
-                            logger.warning(f"Failed to load {j}: {e}")
-                    if plugin_conf and isinstance(plugin_conf, dict):
-                        plugin_name = plugin_conf.get("name") or item.name
-                        self._plugin_configs.setdefault(plugin_name, {}).update(
-                            plugin_conf
-                        )
-                elif item.is_file() and item.suffix in {".py"}:
-                    y = item.with_suffix(".yaml")
-                    j = item.with_suffix(".json")
-                    if y.exists():
-                        try:
-                            import yaml  # type: ignore
-                            with open(y, "r") as f:
-                                plugin_conf = yaml.safe_load(f) or {}
-                        except Exception as e:
-                            logger.warning(f"Failed to load {y}: {e}")
-                    elif j.exists():
-                        try:
-                            with open(j, "r") as f:
-                                plugin_conf = json.load(f)
-                        except Exception as e:
-                            logger.warning(f"Failed to load {j}: {e}")
-                    if plugin_conf and isinstance(plugin_conf, dict):
-                        plugin_name = plugin_conf.get("name") or item.stem
-                        self._plugin_configs.setdefault(plugin_name, {}).update(
-                            plugin_conf
-                        )
-        except Exception as e:
-            logger.error(f"Error scanning per-plugin configs: {e}")
-
-    async def save_plugin_configs(self) -> None:
-        """Save current plugin configurations to file."""
-        config_file = self.plugin_dir / "config.json"
-
-        try:
-            # Collect current configs
-            current_configs = {}
-            for plugin_name, plugin in self._plugins.items():
-                current_configs[plugin_name] = plugin.config.dict()
-
-            with open(config_file, "w") as f:
-                json.dump(current_configs, f, indent=2)
-
-            logger.info(f"Saved plugin configurations to {config_file}")
-
-        except Exception as e:
-            logger.error(f"Error saving plugin configurations: {e}")
-
-    # Context manager support
-    @asynccontextmanager
-    async def plugin_context(self, plugin_name: str):
-        """Context manager for plugin operations."""
-        plugin = await self.get_plugin(plugin_name)
-        if not plugin:
-            raise ValueError(f"Plugin {plugin_name} not found")
-
-        try:
-            yield plugin
-        except Exception as e:
-            logger.error(f"Error in plugin context for {plugin_name}: {e}")
-            plugin._set_status(PluginStatus.ERROR, e)
-            raise
-
-    # Statistics and metrics
-    def get_statistics(self) - 3e Dict[str, Any]:
+    def get_statistics(self) -> Dict[str, Any]:
         """Get manager statistics."""
         return {
             "initialized": self._is_initialized,
@@ -791,6 +555,36 @@ class PluginManager:
             },
             "tool_catalog_size": len(self._tool_catalog),
         }
+
+    async def reload_plugin(self, plugin_name: str) -> bool:
+        """Reload a plugin (unload and load again)."""
+        logger.info(f"Reloading plugin: {plugin_name}")
+        current_config = None
+        if plugin_name in self._plugins:
+            current_config = self._plugins[plugin_name].config.dict()
+        if not await self.unload_plugin(plugin_name):
+            return False
+        return await self.load_plugin(plugin_name, current_config)
+
+    async def load_all_plugins(self) -> Dict[str, bool]:
+        """Load all discovered plugins."""
+        logger.info("Loading all discovered plugins")
+        results: Dict[str, bool] = {}
+        plugins = await self.registry.list_plugins()
+        for plugin_name in plugins:
+            results[plugin_name] = await self.load_plugin(plugin_name)
+        loaded_count = sum(1 for success in results.values() if success)
+        logger.info(f"Loaded {loaded_count}/{len(results)} plugins")
+        return results
+
+    async def unload_all_plugins(self) -> Dict[str, bool]:
+        """Unload all loaded plugins."""
+        logger.info("Unloading all plugins")
+        results: Dict[str, bool] = {}
+        plugin_names = list(self._plugins.keys())
+        for plugin_name in plugin_names:
+            results[plugin_name] = await self.unload_plugin(plugin_name)
+        return results
 
     def get_tool_catalog(self) -> Dict[str, Any]:
         """Return the current tool catalog (name -> tool instance)."""
@@ -856,6 +650,70 @@ class PluginManager:
         except Exception:
             return added
         return added
+
+    async def _load_plugin_configs(self) -> None:
+        """Load plugin configurations from files."""
+        config_json = self.plugin_dir / "config.json"
+        config_yaml = self.plugin_dir / "config.yaml"
+        if config_json.exists():
+            try:
+                with open(config_json, "r") as f:
+                    self._plugin_configs = json.load(f)
+                logger.info(f"Loaded plugin configurations from {config_json}")
+            except Exception as e:
+                logger.error(f"Error loading plugin configurations: {e}")
+        elif config_yaml.exists():
+            try:
+                import yaml  # type: ignore
+                with open(config_yaml, "r") as f:
+                    self._plugin_configs = yaml.safe_load(f) or {}
+                logger.info(f"Loaded plugin configurations from {config_yaml}")
+            except Exception as e:
+                logger.error(f"Error loading YAML plugin configurations: {e}")
+        try:
+            for item in self.plugin_dir.iterdir():
+                plugin_name = None
+                plugin_conf: Optional[Dict[str, Any]] = None
+                if item.is_dir():
+                    y = item / "plugin.yaml"
+                    j = item / "plugin.json"
+                    if y.exists():
+                        try:
+                            import yaml  # type: ignore
+                            with open(y, "r") as f:
+                                plugin_conf = yaml.safe_load(f) or {}
+                        except Exception as e:
+                            logger.warning(f"Failed to load {y}: {e}")
+                    elif j.exists():
+                        try:
+                            with open(j, "r") as f:
+                                plugin_conf = json.load(f)
+                        except Exception as e:
+                            logger.warning(f"Failed to load {j}: {e}")
+                    if plugin_conf and isinstance(plugin_conf, dict):
+                        plugin_name = plugin_conf.get("name") or item.name
+                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+                elif item.is_file() and item.suffix in {".py"}:
+                    y = item.with_suffix(".yaml")
+                    j = item.with_suffix(".json")
+                    if y.exists():
+                        try:
+                            import yaml  # type: ignore
+                            with open(y, "r") as f:
+                                plugin_conf = yaml.safe_load(f) or {}
+                        except Exception as e:
+                            logger.warning(f"Failed to load {y}: {e}")
+                    elif j.exists():
+                        try:
+                            with open(j, "r") as f:
+                                plugin_conf = json.load(f)
+                        except Exception as e:
+                            logger.warning(f"Failed to load {j}: {e}")
+                    if plugin_conf and isinstance(plugin_conf, dict):
+                        plugin_name = plugin_conf.get("name") or item.stem
+                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+        except Exception as e:
+            logger.error(f"Error scanning per-plugin configs: {e}")
 
     # Enhanced JSON-schema-like validator with required, enum, nested objects
     def _validate_config_schema(self, cfg: Dict[str, Any], schema: Dict[str, Any]) -> bool:
