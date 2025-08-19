@@ -137,50 +137,70 @@ class SmartToolSelector:
     def _extract_search_pattern(self, user_request: str) -> str:
         """Extract search pattern from user request with improved heuristics."""
         import re
-        
+
         if not user_request:
             return ""  # Return empty string instead of TODO
-        
+
         text = user_request.strip()
-        
+
         # First try to find quoted strings
         quoted_match = re.search(r'["\'"]([^"\'"\n]+)["\'"]', text)
         if quoted_match:
             return quoted_match.group(1)
-        
+
         # Try to find patterns after keywords like "search for", "find", "grep"
         keyword_patterns = [
-            r'search\s+for\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)',
-            r'find\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)',
-            r'grep\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)',
-            r'look\s+for\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)',
+            r"search\s+for\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)",
+            r"find\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)",
+            r"grep\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)",
+            r"look\s+for\s+([\w\-\.\\_/\*\?\+\[\]\(\)\|\\]+)",
         ]
-        
+
         for pattern in keyword_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 return match.group(1)
-        
+
         # Try to extract function names, class names, or identifiers
         # Look for camelCase or snake_case patterns
-        identifier_match = re.search(r'\b([a-zA-Z_][a-zA-Z0-9_]*(?:[A-Z][a-zA-Z0-9_]*)?)\b', text)
+        identifier_match = re.search(
+            r"\b([a-zA-Z_][a-zA-Z0-9_]*(?:[A-Z][a-zA-Z0-9_]*)?)\b", text
+        )
         if identifier_match and len(identifier_match.group(1)) > 2:
             candidate = identifier_match.group(1)
             # Avoid common words that aren't good search patterns
-            common_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'was', 'one', 'our'}
+            common_words = {
+                "the",
+                "and",
+                "for",
+                "are",
+                "but",
+                "not",
+                "you",
+                "all",
+                "can",
+                "had",
+                "was",
+                "one",
+                "our",
+            }
             if candidate.lower() not in common_words:
                 return candidate
-        
+
         # Look for file extensions or technical terms
-        tech_match = re.search(r'\b(\w*\.\w+|\w*Error|\w*Exception|import|class|def|function|method)\b', text, re.IGNORECASE)
+        tech_match = re.search(
+            r"\b(\w*\.\w+|\w*Error|\w*Exception|import|class|def|function|method)\b",
+            text,
+            re.IGNORECASE,
+        )
         if tech_match:
             return tech_match.group(1)
-        
+
         # As a last resort, try the last meaningful word (longer than 2 chars)
         words = [w for w in text.split() if len(w) > 2 and w.isalnum()]
         if words:
             return words[-1]
-        
+
         # If all else fails, return a generic search term
         return ""
 

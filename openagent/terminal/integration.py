@@ -6,11 +6,15 @@ try:
     from openagent.core.command_intelligence import (
         CommandCompletionEngine,
         CompletionContext,
-        create_command_completion_engine
+        create_command_completion_engine,
     )
-    from openagent.core.command_templates import CommandTemplates, create_command_templates
-    from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+    from openagent.core.command_templates import (
+        CommandTemplates,
+        create_command_templates,
+    )
     from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+    from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
     INTELLIGENCE_AVAILABLE = False
@@ -201,7 +205,7 @@ fi
 def enhanced_zsh_integration_snippet() -> str:
     """
     Return an enhanced zsh snippet with command completion and intelligence features.
-    
+
     Features:
     - Command completion with Tab
     - Smart suggestions with Ctrl-S
@@ -209,7 +213,7 @@ def enhanced_zsh_integration_snippet() -> str:
     - All existing policy and explanation features
     """
     base_snippet = zsh_integration_snippet()
-    
+
     enhanced_features = r"""
 # Enhanced OpenAgent features (command completion and intelligence)
 if [[ -n "$ZSH_VERSION" && -o interactive && $+functions[zle] -gt 0 ]]; then
@@ -297,22 +301,22 @@ if [[ -n "$ZSH_VERSION" && -o interactive && $+functions[zle] -gt 0 ]]; then
   
 fi
 """
-    
+
     # Insert enhanced features before the end marker
     return base_snippet.replace(
         "# --- OpenAgent zsh integration end ---",
-        enhanced_features + "# --- OpenAgent zsh integration end ---"
+        enhanced_features + "# --- OpenAgent zsh integration end ---",
     )
 
 
 def enhanced_bash_integration_snippet() -> str:
     """
     Return an enhanced bash snippet with basic command intelligence features.
-    
+
     Note: Bash has more limited capabilities than zsh for interactive features.
     """
     base_snippet = bash_integration_snippet()
-    
+
     enhanced_features = r"""
 # Enhanced OpenAgent features for bash (limited)
 if _openagent_is_interactive; then
@@ -351,10 +355,10 @@ if _openagent_is_interactive; then
   
 fi
 """
-    
+
     return base_snippet.replace(
         "# --- OpenAgent bash integration end ---",
-        enhanced_features + "# --- OpenAgent bash integration end ---"
+        enhanced_features + "# --- OpenAgent bash integration end ---",
     )
 
 
@@ -363,12 +367,20 @@ def install_snippet(
 ) -> tuple[Path, str]:
     """Return (path, snippet). If apply=True, append to shell rc file."""
     if shell == "zsh":
-        snippet = enhanced_zsh_integration_snippet() if enhanced else zsh_integration_snippet()
+        snippet = (
+            enhanced_zsh_integration_snippet()
+            if enhanced
+            else zsh_integration_snippet()
+        )
         rc_path = Path.home() / ".zshrc"
         marker_start = "# --- OpenAgent zsh integration start ---"
         marker_end = "# --- OpenAgent zsh integration end ---"
     elif shell == "bash":
-        snippet = enhanced_bash_integration_snippet() if enhanced else bash_integration_snippet()
+        snippet = (
+            enhanced_bash_integration_snippet()
+            if enhanced
+            else bash_integration_snippet()
+        )
         rc_path = Path.home() / ".bashrc"
         marker_start = "# --- OpenAgent bash integration start ---"
         marker_end = "# --- OpenAgent bash integration end ---"
@@ -398,25 +410,25 @@ def install_snippet(
 def create_completion_context() -> Optional[CompletionContext]:
     """
     Create a completion context for the current terminal session.
-    
+
     Returns:
         CompletionContext if intelligence systems are available, None otherwise
     """
     if not INTELLIGENCE_AVAILABLE:
         return None
-    
+
     from openagent.core.context_v2.project_analyzer import ProjectType
-    
+
     try:
         current_dir = Path.cwd()
-        
+
         # Detect project type
         project_engine = ProjectContextEngine()
         workspace = project_engine.analyze_workspace(current_dir)
-        
+
         # Get environment variables
         env_vars = dict(os.environ)
-        
+
         # Create completion context
         context = CompletionContext(
             current_directory=current_dir,
@@ -424,36 +436,40 @@ def create_completion_context() -> Optional[CompletionContext]:
             git_repo=workspace.git_context.is_repo if workspace else False,
             git_branch=workspace.git_context.current_branch if workspace else None,
             recent_commands=[],  # Would need to load from history
-            environment_vars=env_vars
+            environment_vars=env_vars,
         )
-        
+
         return context
     except Exception:
         return None
 
 
-def get_command_suggestions(partial_command: str, max_suggestions: int = 10) -> list[str]:
+def get_command_suggestions(
+    partial_command: str, max_suggestions: int = 10
+) -> list[str]:
     """
     Get command suggestions for a partial command.
-    
+
     Args:
         partial_command: Partial command input
         max_suggestions: Maximum number of suggestions to return
-        
+
     Returns:
         List of command suggestions
     """
     if not INTELLIGENCE_AVAILABLE:
         return []
-    
+
     try:
         context = create_completion_context()
         if not context:
             return []
-        
+
         completion_engine = create_command_completion_engine()
-        suggestions = completion_engine.suggest_commands(partial_command, context, max_suggestions)
-        
+        suggestions = completion_engine.suggest_commands(
+            partial_command, context, max_suggestions
+        )
+
         return [s.text for s in suggestions]
     except Exception:
         return []
@@ -462,31 +478,31 @@ def get_command_suggestions(partial_command: str, max_suggestions: int = 10) -> 
 def get_template_suggestions(current_dir: Optional[Path] = None) -> list[str]:
     """
     Get template suggestions for the current context.
-    
+
     Args:
         current_dir: Current directory (defaults to cwd)
-        
+
     Returns:
         List of template names
     """
     if not INTELLIGENCE_AVAILABLE:
         return []
-    
+
     try:
         if current_dir is None:
             current_dir = Path.cwd()
-        
+
         # Get workspace context
         project_engine = ProjectContextEngine()
         workspace = project_engine.analyze_workspace(current_dir)
-        
+
         if not workspace:
             return []
-        
+
         # Get template suggestions
         templates = create_command_templates()
         suggestions = templates.suggest_templates(workspace)
-        
+
         return [t.name for t in suggestions]
     except Exception:
         return []
@@ -495,16 +511,16 @@ def get_template_suggestions(current_dir: Optional[Path] = None) -> list[str]:
 def auto_correct_command(command: str) -> Optional[str]:
     """
     Auto-correct a command if possible.
-    
+
     Args:
         command: Command to correct
-        
+
     Returns:
         Corrected command if correction found, None otherwise
     """
     if not INTELLIGENCE_AVAILABLE:
         return None
-    
+
     try:
         completion_engine = create_command_completion_engine()
         return completion_engine.auto_correct_command(command)

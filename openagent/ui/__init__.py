@@ -5,16 +5,16 @@ This module provides advanced terminal UI components including
 Warp-style command blocks, output folding, and enhanced formatting.
 """
 
-from .blocks import CommandBlock, BlockManager, BlockType
+from .blocks import BlockManager, BlockType, CommandBlock
 from .formatting import AdvancedFormatter, OutputFolder
 from .renderer import BlockRenderer, TerminalRenderer
 
 __all__ = [
     "CommandBlock",
-    "BlockManager", 
+    "BlockManager",
     "BlockType",
     "AdvancedFormatter",
     "OutputFolder",
     "BlockRenderer",
-    "TerminalRenderer"
+    "TerminalRenderer",
 ]

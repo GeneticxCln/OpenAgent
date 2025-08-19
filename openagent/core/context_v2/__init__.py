@@ -9,13 +9,13 @@ Provides Warp-level context understanding including:
 - Git state understanding
 """
 
+from .environment_detector import EnvironmentContext, EnvironmentDetector
+from .history_intelligence import CommandPatterns, HistoryIntelligence
 from .project_analyzer import ProjectContextEngine, ProjectType, WorkspaceContext
-from .history_intelligence import HistoryIntelligence, CommandPatterns
-from .environment_detector import EnvironmentDetector, EnvironmentContext
 
 __all__ = [
     "ProjectContextEngine",
-    "ProjectType", 
+    "ProjectType",
     "WorkspaceContext",
     "HistoryIntelligence",
     "CommandPatterns",

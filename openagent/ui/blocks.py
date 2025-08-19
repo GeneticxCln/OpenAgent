@@ -23,7 +23,7 @@ from rich.tree import Tree
 
 class BlockType(Enum):
     """Types of command blocks."""
-    
+
     COMMAND = "command"
     OUTPUT = "output"
     ERROR = "error"
@@ -34,7 +34,7 @@ class BlockType(Enum):
 
 class BlockStatus(Enum):
     """Status of a command block."""
-    
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"
@@ -45,7 +45,7 @@ class BlockStatus(Enum):
 @dataclass
 class CommandBlock:
     """A visual command block containing command, output, and metadata."""
-    
+
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     block_type: BlockType = BlockType.COMMAND
     status: BlockStatus = BlockStatus.PENDING
@@ -62,17 +62,17 @@ class CommandBlock:
     selected: bool = False
     bookmarked: bool = False
     tags: List[str] = field(default_factory=list)
-    
+
     def __post_init__(self):
         """Initialize block after creation."""
         if self.working_directory is None:
             self.working_directory = str(Path.cwd())
-    
+
     def start_execution(self):
         """Mark block as running."""
         self.status = BlockStatus.RUNNING
         self.timestamp = time.time()
-    
+
     def complete_execution(self, exit_code: int = 0, duration: Optional[float] = None):
         """Mark block as completed."""
         self.exit_code = exit_code
@@ -81,31 +81,33 @@ class CommandBlock:
             self.duration = duration
         elif self.timestamp:
             self.duration = time.time() - self.timestamp
-    
+
     def toggle_collapsed(self):
         """Toggle output collapsed state."""
         self.collapsed = not self.collapsed
-    
+
     def add_tag(self, tag: str):
         """Add a tag to the block."""
         if tag not in self.tags:
             self.tags.append(tag)
-    
+
     def remove_tag(self, tag: str):
         """Remove a tag from the block."""
         if tag in self.tags:
             self.tags.remove(tag)
-    
+
     def get_summary(self) -> str:
         """Get a one-line summary of the block."""
         if self.command:
-            cmd_preview = self.command[:50] + "..." if len(self.command) > 50 else self.command
+            cmd_preview = (
+                self.command[:50] + "..." if len(self.command) > 50 else self.command
+            )
             return f"[{self.status.value}] {cmd_preview}"
         elif self.block_type == BlockType.AI_RESPONSE:
             return f"[AI] Response block"
         else:
             return f"[{self.block_type.value}] Block {self.id}"
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert block to dictionary for serialization."""
         return {
@@ -124,9 +126,9 @@ class CommandBlock:
             "collapsed": self.collapsed,
             "selected": self.selected,
             "bookmarked": self.bookmarked,
-            "tags": self.tags
+            "tags": self.tags,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CommandBlock":
         """Create block from dictionary."""
@@ -152,7 +154,7 @@ class CommandBlock:
 
 class BlockManager:
     """Manages command blocks and provides block operations."""
-    
+
     def __init__(self, max_blocks: int = 1000):
         """Initialize block manager."""
         self.blocks: List[CommandBlock] = []
@@ -163,94 +165,98 @@ class BlockManager:
             "block_added": [],
             "block_updated": [],
             "block_removed": [],
-            "selection_changed": []
+            "selection_changed": [],
         }
-    
+
     def add_block(self, block: CommandBlock) -> CommandBlock:
         """Add a new block."""
         self.blocks.append(block)
-        
+
         # Trim old blocks if we exceed max
         if len(self.blocks) > self.max_blocks:
-            removed_blocks = self.blocks[:-self.max_blocks]
-            self.blocks = self.blocks[-self.max_blocks:]
+            removed_blocks = self.blocks[: -self.max_blocks]
+            self.blocks = self.blocks[-self.max_blocks :]
             for removed_block in removed_blocks:
                 self._trigger_callback("block_removed", removed_block)
-        
+
         # Auto-select the new block
         self.selected_index = len(self.blocks) - 1
         self._trigger_callback("block_added", block)
         self._trigger_callback("selection_changed", self.selected_index)
-        
+
         return block
-    
-    def create_command_block(self, command: str, working_dir: Optional[str] = None) -> CommandBlock:
+
+    def create_command_block(
+        self, command: str, working_dir: Optional[str] = None
+    ) -> CommandBlock:
         """Create and add a new command block."""
         block = CommandBlock(
             block_type=BlockType.COMMAND,
             command=command,
-            working_directory=working_dir or str(Path.cwd())
+            working_directory=working_dir or str(Path.cwd()),
         )
         return self.add_block(block)
-    
-    def create_ai_response_block(self, response: str, metadata: Optional[Dict] = None) -> CommandBlock:
+
+    def create_ai_response_block(
+        self, response: str, metadata: Optional[Dict] = None
+    ) -> CommandBlock:
         """Create and add a new AI response block."""
         block = CommandBlock(
-            block_type=BlockType.AI_RESPONSE,
-            output=response,
-            metadata=metadata or {}
+            block_type=BlockType.AI_RESPONSE, output=response, metadata=metadata or {}
         )
         return self.add_block(block)
-    
+
     def get_block(self, block_id: str) -> Optional[CommandBlock]:
         """Get block by ID."""
         for block in self.blocks:
             if block.id == block_id:
                 return block
         return None
-    
+
     def get_selected_block(self) -> Optional[CommandBlock]:
         """Get currently selected block."""
-        if self.selected_index is not None and 0 <= self.selected_index < len(self.blocks):
+        if self.selected_index is not None and 0 <= self.selected_index < len(
+            self.blocks
+        ):
             return self.blocks[self.selected_index]
         return None
-    
+
     def select_block(self, index: int) -> bool:
         """Select block by index."""
         if 0 <= index < len(self.blocks):
             # Deselect previous block
             if self.selected_index is not None:
                 self.blocks[self.selected_index].selected = False
-            
+
             # Select new block
             self.selected_index = index
             self.blocks[index].selected = True
             self._trigger_callback("selection_changed", index)
             return True
         return False
-    
+
     def select_next_block(self) -> bool:
         """Select next block."""
         if not self.blocks:
             return False
-        
+
         if self.selected_index is None:
             return self.select_block(0)
-        
+
         next_index = (self.selected_index + 1) % len(self.blocks)
         return self.select_block(next_index)
-    
+
     def select_previous_block(self) -> bool:
         """Select previous block."""
         if not self.blocks:
             return False
-        
+
         if self.selected_index is None:
             return self.select_block(len(self.blocks) - 1)
-        
+
         prev_index = (self.selected_index - 1) % len(self.blocks)
         return self.select_block(prev_index)
-    
+
     def toggle_block_collapsed(self, block_id: Optional[str] = None) -> bool:
         """Toggle collapsed state of block."""
         block = None
@@ -258,13 +264,13 @@ class BlockManager:
             block = self.get_block(block_id)
         else:
             block = self.get_selected_block()
-        
+
         if block:
             block.toggle_collapsed()
             self._trigger_callback("block_updated", block)
             return True
         return False
-    
+
     def bookmark_block(self, block_id: Optional[str] = None) -> bool:
         """Toggle bookmark state of block."""
         block = None
@@ -272,19 +278,19 @@ class BlockManager:
             block = self.get_block(block_id)
         else:
             block = self.get_selected_block()
-        
+
         if block:
             block.bookmarked = not block.bookmarked
             self._trigger_callback("block_updated", block)
             return True
         return False
-    
+
     def delete_block(self, block_id: str) -> bool:
         """Delete a block."""
         for i, block in enumerate(self.blocks):
             if block.id == block_id:
                 removed_block = self.blocks.pop(i)
-                
+
                 # Update selection if needed
                 if self.selected_index == i:
                     if i < len(self.blocks):
@@ -295,100 +301,103 @@ class BlockManager:
                         self.selected_index = None
                 elif self.selected_index is not None and self.selected_index > i:
                     self.selected_index -= 1
-                
+
                 self._trigger_callback("block_removed", removed_block)
                 return True
         return False
-    
+
     def clear_blocks(self):
         """Clear all blocks."""
         removed_blocks = self.blocks.copy()
         self.blocks.clear()
         self.selected_index = None
-        
+
         for block in removed_blocks:
             self._trigger_callback("block_removed", block)
-    
+
     def get_blocks_by_tag(self, tag: str) -> List[CommandBlock]:
         """Get all blocks with a specific tag."""
         return [block for block in self.blocks if tag in block.tags]
-    
+
     def get_blocks_by_status(self, status: BlockStatus) -> List[CommandBlock]:
         """Get all blocks with a specific status."""
         return [block for block in self.blocks if block.status == status]
-    
+
     def get_blocks_by_type(self, block_type: BlockType) -> List[CommandBlock]:
         """Get all blocks of a specific type."""
         return [block for block in self.blocks if block.block_type == block_type]
-    
+
     def search_blocks(self, query: str) -> List[CommandBlock]:
         """Search blocks by command or output content."""
         query_lower = query.lower()
         results = []
-        
+
         for block in self.blocks:
-            if (block.command and query_lower in block.command.lower()) or \
-               (block.output and query_lower in block.output.lower()) or \
-               (block.error and query_lower in block.error.lower()):
+            if (
+                (block.command and query_lower in block.command.lower())
+                or (block.output and query_lower in block.output.lower())
+                or (block.error and query_lower in block.error.lower())
+            ):
                 results.append(block)
-        
+
         return results
-    
+
     def export_blocks(self, format: str = "json") -> Union[str, Dict]:
         """Export blocks in specified format."""
         if format == "json":
             import json
+
             return json.dumps([block.to_dict() for block in self.blocks], indent=2)
         elif format == "markdown":
             return self._export_to_markdown()
         else:
             raise ValueError(f"Unsupported export format: {format}")
-    
+
     def _export_to_markdown(self) -> str:
         """Export blocks to markdown format."""
         lines = ["# OpenAgent Command History\n"]
-        
+
         for block in self.blocks:
             lines.append(f"## Block {block.id}")
             lines.append(f"**Type:** {block.block_type.value}")
             lines.append(f"**Status:** {block.status.value}")
             lines.append(f"**Timestamp:** {time.ctime(block.timestamp)}")
-            
+
             if block.command:
                 lines.append(f"**Command:**")
                 lines.append(f"```bash")
                 lines.append(block.command)
                 lines.append(f"```")
-            
+
             if block.output:
                 lines.append(f"**Output:**")
                 lines.append(f"```")
                 lines.append(block.output)
                 lines.append(f"```")
-            
+
             if block.error:
                 lines.append(f"**Error:**")
                 lines.append(f"```")
                 lines.append(block.error)
                 lines.append(f"```")
-            
+
             if block.tags:
                 lines.append(f"**Tags:** {', '.join(block.tags)}")
-            
+
             lines.append("")  # Empty line between blocks
-        
+
         return "\n".join(lines)
-    
+
     def add_callback(self, event: str, callback: callable):
         """Add event callback."""
         if event in self._callbacks:
             self._callbacks[event].append(callback)
-    
+
     def remove_callback(self, event: str, callback: callable):
         """Remove event callback."""
         if event in self._callbacks and callback in self._callbacks[event]:
             self._callbacks[event].remove(callback)
-    
+
     def _trigger_callback(self, event: str, *args):
         """Trigger event callbacks."""
         if event in self._callbacks:
@@ -402,103 +411,108 @@ class BlockManager:
 
 class BlockRenderer:
     """Renders command blocks with Rich formatting."""
-    
+
     def __init__(self, console: Optional[Console] = None):
         """Initialize block renderer."""
         self.console = console or Console()
-    
+
     def render_block(self, block: CommandBlock, width: Optional[int] = None) -> Panel:
         """Render a single command block."""
         # Create content based on block type and status
         content_parts = []
-        
+
         # Add command if present
         if block.command:
             cmd_text = Text(block.command, style="bold cyan")
             content_parts.append(cmd_text)
-        
+
         # Add output/error based on collapse state
         if not block.collapsed:
             if block.output:
                 output_text = Text(block.output)
                 content_parts.append(output_text)
-            
+
             if block.error:
                 error_text = Text(block.error, style="bold red")
                 content_parts.append(error_text)
-            
+
             if block.ai_explanation:
                 ai_text = Text(f"AI: {block.ai_explanation}", style="italic blue")
                 content_parts.append(ai_text)
         else:
             # Show collapsed indicator
             if block.output or block.error:
-                collapsed_text = Text("... (output collapsed, press 'o' to expand)", style="dim")
+                collapsed_text = Text(
+                    "... (output collapsed, press 'o' to expand)", style="dim"
+                )
                 content_parts.append(collapsed_text)
-        
+
         # Join content
         if content_parts:
             content = Text("\n").join(content_parts)
         else:
             content = Text("(empty block)", style="dim")
-        
+
         # Determine panel style based on status and selection
-        border_style = "green" if block.status == BlockStatus.SUCCESS else \
-                      "red" if block.status == BlockStatus.ERROR else \
-                      "yellow" if block.status == BlockStatus.RUNNING else \
-                      "blue"
-        
+        border_style = (
+            "green"
+            if block.status == BlockStatus.SUCCESS
+            else (
+                "red"
+                if block.status == BlockStatus.ERROR
+                else "yellow" if block.status == BlockStatus.RUNNING else "blue"
+            )
+        )
+
         if block.selected:
             border_style = f"bold {border_style}"
-        
+
         # Create title with metadata
         title_parts = [f"Block {block.id}"]
-        
+
         if block.duration:
             title_parts.append(f"({block.duration:.2f}s)")
-        
+
         if block.bookmarked:
             title_parts.append("📌")
-        
+
         if block.tags:
             title_parts.append(f"[{', '.join(block.tags)}]")
-        
+
         title = " ".join(title_parts)
-        
+
         # Create panel
         panel = Panel(
-            content,
-            title=title,
-            border_style=border_style,
-            expand=False,
-            width=width
+            content, title=title, border_style=border_style, expand=False, width=width
         )
-        
+
         return panel
-    
-    def render_block_list(self, blocks: List[CommandBlock], width: Optional[int] = None) -> Tree:
+
+    def render_block_list(
+        self, blocks: List[CommandBlock], width: Optional[int] = None
+    ) -> Tree:
         """Render a list of blocks as a tree."""
         tree = Tree("Command Blocks")
-        
+
         for i, block in enumerate(blocks):
             node_text = block.get_summary()
             if block.selected:
                 node_text = f"► {node_text}"
-            
+
             node = tree.add(node_text)
-            
+
             # Add metadata as sub-nodes
             if block.working_directory:
                 node.add(f"📁 {block.working_directory}")
-            
+
             if block.duration:
                 node.add(f"⏱️ {block.duration:.2f}s")
-            
+
             if block.exit_code is not None:
                 node.add(f"🔢 Exit code: {block.exit_code}")
-        
+
         return tree
-    
+
     def render_block_summary(self, block: CommandBlock) -> Text:
         """Render a one-line summary of a block."""
         # Status indicator
@@ -507,33 +521,40 @@ class BlockRenderer:
             BlockStatus.RUNNING: "🔄",
             BlockStatus.SUCCESS: "✅",
             BlockStatus.ERROR: "❌",
-            BlockStatus.CANCELLED: "🚫"
+            BlockStatus.CANCELLED: "🚫",
         }
-        
+
         indicator = status_indicators.get(block.status, "❓")
-        
+
         # Build summary text
         summary_parts = [
             indicator,
             f"[{block.id}]",
         ]
-        
+
         if block.command:
-            cmd_preview = block.command[:40] + "..." if len(block.command) > 40 else block.command
+            cmd_preview = (
+                block.command[:40] + "..." if len(block.command) > 40 else block.command
+            )
             summary_parts.append(f"`{cmd_preview}`")
-        
+
         if block.bookmarked:
             summary_parts.append("📌")
-        
+
         summary_text = " ".join(summary_parts)
-        
+
         # Style based on status
-        style = "green" if block.status == BlockStatus.SUCCESS else \
-               "red" if block.status == BlockStatus.ERROR else \
-               "yellow" if block.status == BlockStatus.RUNNING else \
-               "white"
-        
+        style = (
+            "green"
+            if block.status == BlockStatus.SUCCESS
+            else (
+                "red"
+                if block.status == BlockStatus.ERROR
+                else "yellow" if block.status == BlockStatus.RUNNING else "white"
+            )
+        )
+
         if block.selected:
             style = f"bold {style}"
-        
+
         return Text(summary_text, style=style)

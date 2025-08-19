@@ -16,6 +16,7 @@ import psutil
 # Optional ML dependencies - don't fail if not available
 try:
     from huggingface_hub import HfApi, login
+
     HF_AVAILABLE = True
 except ImportError:
     HfApi = None
@@ -29,9 +30,10 @@ try:
         AutoTokenizer,
         GenerationConfig,
         Pipeline,
-        pipeline,
         TextStreamer,
+        pipeline,
     )
+
     TRANSFORMERS_AVAILABLE = True
 except ImportError:
     # Create mock classes for when transformers isn't available
@@ -149,9 +151,13 @@ class HuggingFaceLLM:
         """
         # Check if required dependencies are available
         if not HF_AVAILABLE:
-            raise ImportError("huggingface_hub is required but not installed. Install with: pip install huggingface_hub")
+            raise ImportError(
+                "huggingface_hub is required but not installed. Install with: pip install huggingface_hub"
+            )
         if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("transformers is required but not installed. Install with: pip install transformers")
+            raise ImportError(
+                "transformers is required but not installed. Install with: pip install transformers"
+            )
         self.model_name = model_name
         self.max_length = max_length
         self.temperature = temperature
@@ -798,11 +804,11 @@ def get_llm(model_name: str = "codellama-7b", **kwargs):
     Routing rules (local-only):
     - model_name startswith 'ollama:': use Ollama provider (local)
     - otherwise: use Hugging Face provider (local)
-    
+
     Returns None if dependencies are not available, allowing graceful degradation.
     """
     global llm
-    
+
     if model_name and (model_name == "ollama" or model_name.startswith("ollama:")):
         try:
             from .llm_ollama import OllamaLLM, get_default_ollama_model
@@ -824,7 +830,7 @@ def get_llm(model_name: str = "codellama-7b", **kwargs):
         except ImportError as e:
             logger.warning(f"Ollama LLM not available: {e}")
             return None
-    
+
     # Default HF path
     try:
         if llm is None or getattr(llm, "model_name", None) != model_name:

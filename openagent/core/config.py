@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Union
 # Optional YAML support
 try:
     import yaml
+
     YAML_AVAILABLE = True
 except ImportError:
     yaml = None
@@ -137,7 +138,9 @@ class Config(BaseModel):
             with open(config_path, "r") as f:
                 if config_path.suffix.lower() in [".yaml", ".yml"]:
                     if not YAML_AVAILABLE:
-                        raise ConfigError("PyYAML is required to load YAML configuration files. Install with: pip install pyyaml")
+                        raise ConfigError(
+                            "PyYAML is required to load YAML configuration files. Install with: pip install pyyaml"
+                        )
                     data = yaml.safe_load(f)
                 elif config_path.suffix.lower() == ".json":
                     import json
@@ -151,7 +154,11 @@ class Config(BaseModel):
             return cls(**data)
 
         except Exception as e:
-            if YAML_AVAILABLE and hasattr(e, '__class__') and 'yaml' in str(type(e)).lower():
+            if (
+                YAML_AVAILABLE
+                and hasattr(e, "__class__")
+                and "yaml" in str(type(e)).lower()
+            ):
                 raise ConfigError(f"Failed to parse YAML configuration: {e}")
             elif "yaml" in str(e).lower():
                 raise ConfigError(f"YAML parsing failed: {e}")
@@ -218,9 +225,11 @@ class Config(BaseModel):
         try:
             # Create directory if it doesn't exist
             config_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             if not YAML_AVAILABLE:
-                raise ConfigError("PyYAML is required to save YAML configuration files. Install with: pip install pyyaml")
+                raise ConfigError(
+                    "PyYAML is required to save YAML configuration files. Install with: pip install pyyaml"
+                )
 
             with open(config_path, "w") as f:
                 yaml.dump(self.dict(), f, default_flow_style=False, indent=2)

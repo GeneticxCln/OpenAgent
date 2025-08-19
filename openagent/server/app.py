@@ -146,10 +146,11 @@ app = FastAPI(
 
 # Enhanced OpenAPI schema
 from openagent.server.openapi_enhancement import enhance_openapi_schema
+
 app.openapi = lambda: enhance_openapi_schema(app)
 
 # API Versioning
-from openagent.server.versioning import versioning, VersionInfo
+from openagent.server.versioning import VersionInfo, versioning
 
 # Add middleware
 app.add_middleware(
@@ -176,6 +177,7 @@ from fastapi.responses import PlainTextResponse, Response
 async def api_versioning_middleware(request: Request, call_next):
     """Handle API versioning for requests."""
     return await versioning.version_middleware(request, call_next)
+
 
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
@@ -266,8 +268,10 @@ async def _stream_chat_response(agent: Agent, message: str):
             logger.warning(f"Agent streaming failed, falling back: {e}")
 
     # Fallback to LLM-level streaming
-    if llm and hasattr(llm, "stream_generate") and callable(
-        getattr(llm, "stream_generate")
+    if (
+        llm
+        and hasattr(llm, "stream_generate")
+        and callable(getattr(llm, "stream_generate"))
     ):
         try:
             async for token in llm.stream_generate(message):
@@ -569,20 +573,24 @@ async def get_api_status():
             "websockets": True,
             "code_generation": True,
             "code_analysis": True,
-            "authentication": auth_manager.config.auth_enabled if hasattr(auth_manager.config, 'auth_enabled') else False,
+            "authentication": (
+                auth_manager.config.auth_enabled
+                if hasattr(auth_manager.config, "auth_enabled")
+                else False
+            ),
             "rate_limiting": True,
             "metrics": True,
-            "observability": True
+            "observability": True,
         },
         "agents": {
             "available": list(agents.keys()),
             "count": len(agents),
-            "default": "default"
+            "default": "default",
         },
         "models": {
             "categories": ["code", "chat", "lightweight"],
             "supports_streaming": True,
-            "supports_ollama": True
+            "supports_ollama": True,
         },
         "limits": {
             "max_message_length": 4096,
@@ -590,9 +598,9 @@ async def get_api_status():
             "rate_limits": {
                 "chat": "100/min",
                 "code_generation": "20/min",
-                "system_info": "30/min"
-            }
-        }
+                "system_info": "30/min",
+            },
+        },
     }
 
 

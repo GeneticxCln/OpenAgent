@@ -15,11 +15,14 @@ from openagent.core.exceptions import AgentError, ToolError
 # Optional import - LLM functionality
 try:
     from openagent.core.llm import get_llm
+
     _LLM_AVAILABLE = True
 except ImportError:
     _LLM_AVAILABLE = False
+
     def get_llm(*args, **kwargs):
         return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +65,12 @@ class Agent(BaseAgent):
         # Initialize LLM (local-only routing: Ollama or Hugging Face)
         llm_config = llm_config or {}
         self.llm = get_llm(model_name=model_name, **llm_config)
-        
+
         # Check if LLM is available
         if self.llm is None:
-            logger.warning(f"LLM '{model_name}' not available - agent will use fallback responses")
+            logger.warning(
+                f"LLM '{model_name}' not available - agent will use fallback responses"
+            )
 
         # Agent state
         self.is_processing = False
@@ -379,14 +384,18 @@ class Agent(BaseAgent):
             else:
                 # Fallback response when LLM is not available
                 logger.info("Using simple fallback response (LLM not available)")
-                fallback = await self._generate_simple_fallback(input_text, tool_context)
+                fallback = await self._generate_simple_fallback(
+                    input_text, tool_context
+                )
                 return fallback
 
         except Exception as e:
             logger.error(f"LLM generation failed: {e}")
             # Try simple fallback if available
             if self.llm is None:
-                fallback = await self._generate_simple_fallback(input_text, tool_context)
+                fallback = await self._generate_simple_fallback(
+                    input_text, tool_context
+                )
                 return fallback
             # Propagate to outer handler so error metadata is set
             raise AgentError(f"LLM generation failed: {e}")
@@ -591,7 +600,9 @@ class Agent(BaseAgent):
         except Exception:
             return None
 
-    async def _generate_simple_fallback(self, input_text: str, tool_context: str = "") -> str:
+    async def _generate_simple_fallback(
+        self, input_text: str, tool_context: str = ""
+    ) -> str:
         """
         Generate a simple fallback response when LLM is not available.
 
@@ -605,10 +616,10 @@ class Agent(BaseAgent):
         # If we have tool results, include them
         if tool_context:
             return f"I processed your request and found: {tool_context.strip()}"
-        
+
         # Simple pattern-based responses
         input_lower = input_text.lower()
-        
+
         if any(word in input_lower for word in ["hello", "hi", "hey"]):
             return f"Hello! I'm {self.name}. I'm currently running in limited mode (LLM not available), but I can still help with basic tasks."
         elif "?" in input_text:

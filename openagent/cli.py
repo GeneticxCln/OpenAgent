@@ -32,10 +32,12 @@ from openagent.core.config import Config
 from openagent.core.history import HistoryManager
 from openagent.core.llm import ModelConfig, get_llm
 from openagent.core.performance.optimization import (
-    get_model_cache, get_startup_optimizer, get_memory_optimizer, 
-    get_performance_profiler, optimize_openagent_performance
+    get_memory_optimizer,
+    get_model_cache,
+    get_performance_profiler,
+    get_startup_optimizer,
+    optimize_openagent_performance,
 )
-from openagent.ui import create_terminal_renderer
 from openagent.core.redact import redact_text
 from openagent.core.workflows import Workflow, WorkflowManager
 from openagent.terminal.integration import install_snippet
@@ -48,6 +50,7 @@ from openagent.terminal.validator import (
 from openagent.terminal.validator import validate as validate_cmd
 from openagent.tools.git import GitTool, RepoGrep
 from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
+from openagent.ui import create_terminal_renderer
 
 # Initialize Rich console
 console = Console()
@@ -2315,95 +2318,123 @@ def optimize(
     memory_limit_gb: float = typer.Option(4.0, help="Memory limit in GB"),
 ):
     """Optimize OpenAgent performance with advanced optimizations."""
-    console.print(Panel.fit("🚀 Starting OpenAgent Performance Optimization", title="Optimizer"))
-    
+    console.print(
+        Panel.fit("🚀 Starting OpenAgent Performance Optimization", title="Optimizer")
+    )
+
     async def run_optimization():
         # Start optimizations
         result = await optimize_openagent_performance()
-        
+
         # Show results
         console.print("\n✅ [green]Performance optimization complete![/green]")
         console.print(f"\n[bold]Optimization Results:[/bold]")
         for key, value in result.items():
             console.print(f"  • {key}: {value}")
-        
+
         # Get performance profiler stats
         profiler = get_performance_profiler()
         profiler.start_profiling()
         report = profiler.get_performance_report()
-        
+
         # Show performance metrics
         metrics_table = Table(show_header=True, header_style="bold cyan")
         metrics_table.add_column("Metric", style="yellow")
         metrics_table.add_column("Value", style="white")
-        
+
         for metric, value in report["metrics"].items():
             if isinstance(value, float):
-                value_str = f"{value:.2f}" if metric.endswith(('_time', '_mb', '_percent')) else str(value)
+                value_str = (
+                    f"{value:.2f}"
+                    if metric.endswith(("_time", "_mb", "_percent"))
+                    else str(value)
+                )
             else:
                 value_str = str(value)
-            metrics_table.add_row(metric.replace('_', ' ').title(), value_str)
-        
+            metrics_table.add_row(metric.replace("_", " ").title(), value_str)
+
         console.print("\n")
         console.print(Panel(metrics_table, title="Performance Metrics"))
-        
+
         # Show recommendations if any
         if report["recommendations"]:
             console.print("\n[bold yellow]Recommendations:[/bold yellow]")
             for rec in report["recommendations"]:
-                severity_color = "red" if rec["severity"] == "high" else "yellow" if rec["severity"] == "medium" else "blue"
-                console.print(f"  [{severity_color}]{rec['severity'].upper()}[/{severity_color}]: {rec['message']}")
+                severity_color = (
+                    "red"
+                    if rec["severity"] == "high"
+                    else "yellow" if rec["severity"] == "medium" else "blue"
+                )
+                console.print(
+                    f"  [{severity_color}]{rec['severity'].upper()}[/{severity_color}]: {rec['message']}"
+                )
                 console.print(f"    💡 {rec['suggestion']}")
-    
+
     asyncio.run(run_optimization())
 
 
 @app.command()
 def ui_demo(
     duration: int = typer.Option(30, help="Demo duration in seconds"),
-    interactive: bool = typer.Option(False, help="Enable interactive mode with keyboard controls"),
+    interactive: bool = typer.Option(
+        False, help="Enable interactive mode with keyboard controls"
+    ),
 ):
     """Demo the advanced terminal UI features with command blocks and formatting."""
     console.print(Panel.fit("🎨 Starting OpenAgent UI Demo", title="UI Demo"))
-    
+
     async def run_ui_demo():
         # Create renderer
         renderer = create_terminal_renderer()
-        
+
         # Start live display
         live = renderer.start_live_display()
-        
+
         try:
             console.print("\n[green]Live UI Demo Started![/green]")
-            console.print("[dim]Watch as commands are executed with visual blocks and formatting...[/dim]")
-            
+            console.print(
+                "[dim]Watch as commands are executed with visual blocks and formatting...[/dim]"
+            )
+
             # Demo sequence
             demo_commands = [
-                ("ls -la", "total 24\ndrwxr-xr-x 3 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 5 user user 4096 Jan 1 11:00 ..\n-rw-r--r-- 1 user user 1234 Jan 1 12:00 file.txt\n-rw-r--r-- 1 user user 567 Jan 1 11:30 script.py"),
-                ("cat script.py", "#!/usr/bin/env python3\ndef hello_world():\n    print('Hello from OpenAgent!')\n\nif __name__ == '__main__':\n    hello_world()"),
-                ("git status", "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to commit, working tree clean"),
-                ("docker ps", "CONTAINER ID   IMAGE          COMMAND       CREATED         STATUS         PORTS     NAMES\n1a2b3c4d5e6f   nginx:latest   nginx -g ...  2 hours ago     Up 2 hours     80/tcp    web-server"),
+                (
+                    "ls -la",
+                    "total 24\ndrwxr-xr-x 3 user user 4096 Jan 1 12:00 .\ndrwxr-xr-x 5 user user 4096 Jan 1 11:00 ..\n-rw-r--r-- 1 user user 1234 Jan 1 12:00 file.txt\n-rw-r--r-- 1 user user 567 Jan 1 11:30 script.py",
+                ),
+                (
+                    "cat script.py",
+                    "#!/usr/bin/env python3\ndef hello_world():\n    print('Hello from OpenAgent!')\n\nif __name__ == '__main__':\n    hello_world()",
+                ),
+                (
+                    "git status",
+                    "On branch main\nYour branch is up to date with 'origin/main'.\n\nnothing to commit, working tree clean",
+                ),
+                (
+                    "docker ps",
+                    "CONTAINER ID   IMAGE          COMMAND       CREATED         STATUS         PORTS     NAMES\n1a2b3c4d5e6f   nginx:latest   nginx -g ...  2 hours ago     Up 2 hours     80/tcp    web-server",
+                ),
                 ("invalid_command", "bash: invalid_command: command not found", True),
             ]
-            
+
             for i, cmd_data in enumerate(demo_commands):
                 if len(cmd_data) == 3:
                     command, output, is_error = cmd_data
                 else:
                     command, output = cmd_data
                     is_error = False
-                
+
                 # Create and start block
                 block = renderer.render_command_execution(command)
                 await asyncio.sleep(1)
-                
+
                 # Add output
                 renderer.update_block_output(block, output, is_error)
-                
+
                 # Complete execution
                 exit_code = 127 if is_error else 0
                 renderer.complete_block_execution(block, exit_code, 0.5)
-                
+
                 # Add AI explanation for some commands
                 if command.startswith("ls"):
                     renderer.add_ai_response(
@@ -2413,13 +2444,17 @@ def ui_demo(
                     renderer.add_ai_response(
                         "The `docker ps` command shows currently running containers with their IDs, images, and status information."
                     )
-                
+
                 await asyncio.sleep(3)
-            
+
             if interactive:
-                console.print("\n[cyan]Interactive mode enabled! Use keyboard shortcuts:[/cyan]")
-                console.print("[dim]j/k: navigate blocks, o: toggle output, h: help, q: quit[/dim]")
-                
+                console.print(
+                    "\n[cyan]Interactive mode enabled! Use keyboard shortcuts:[/cyan]"
+                )
+                console.print(
+                    "[dim]j/k: navigate blocks, o: toggle output, h: help, q: quit[/dim]"
+                )
+
                 # Keep demo running for interactive use
                 start_time = time.time()
                 while time.time() - start_time < duration:
@@ -2429,24 +2464,24 @@ def ui_demo(
                 remaining = max(0, duration - len(demo_commands) * 4)
                 if remaining > 0:
                     await asyncio.sleep(remaining)
-            
+
         finally:
             renderer.stop_live_display()
             console.print("\n✅ [green]UI Demo completed![/green]")
-            
+
             # Show stats
             stats = renderer.get_stats()
             stats_table = Table(show_header=True, header_style="bold")
             stats_table.add_column("Stat", style="cyan")
             stats_table.add_column("Value", style="white")
-            
+
             for key, value in stats.items():
                 if isinstance(value, dict):
                     value = f"{sum(value.values())} total"
-                stats_table.add_row(key.replace('_', ' ').title(), str(value))
-            
+                stats_table.add_row(key.replace("_", " ").title(), str(value))
+
             console.print(Panel(stats_table, title="Demo Statistics"))
-    
+
     asyncio.run(run_ui_demo())
 
 
