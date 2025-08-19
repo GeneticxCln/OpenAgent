@@ -520,6 +520,34 @@ def chat(
             except Exception:
                 pass
 
+    # Register plugin-provided tools with agent (local session only)
+    try:
+        from openagent.plugins.manager import PluginManager
+
+        pm_for_tools = PluginManager()
+        # Only attempt if not using server; server mode uses its own tool layer
+        if not api_url:
+            import asyncio as _asyncio
+
+            async def _load_and_attach():
+                await pm_for_tools.initialize()
+                await pm_for_tools.discover_plugins()
+                await pm_for_tools.load_all_plugins()
+                # Enable plugins that are configured enabled
+                for name, info in [(md.get("metadata", {}).get("name"), md) for md in await pm_for_tools.list_plugins()]:
+                    if not name:
+                        continue
+                    try:
+                        await pm_for_tools.enable_plugin(name)
+                    except Exception:
+                        pass
+                if agent:
+                    pm_for_tools.register_tools_with_agent(agent)
+
+            _asyncio.get_event_loop().run_until_complete(_load_and_attach())
+    except Exception:
+        pass
+
     # Interactive chat loop
     asyncio.run(
         chat_loop(
@@ -2030,61 +2058,165 @@ plugin_app = typer.Typer(help="Manage OpenAgent plugins")
 app.add_typer(plugin_app, name="plugin")
 
 
+@plugin_app.command("list")
 def plugin_list(
     verbose: bool = typer.Option(
         False, "-v", "--verbose", help="Show detailed plugin information"
     )
 ):
-    """List all installed plugins."""
-    console.print("[bold cyan]Installed Plugins:[/bold cyan]")
+    """List all discovered plugins and their status."""
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
 
-    # Example plugins
-    plugins_info = [
-        {
-            "name": "weather",
-            "version": "1.0.0",
-            "description": "Get weather information for locations",
-            "status": "example",
-            "path": "examples/plugins/weather",
-        },
-        {
-            "name": "system-tools",
-            "version": "builtin",
-            "description": "Built-in system management tools",
-            "status": "active",
-            "path": "openagent.tools.system",
-        },
-    ]
-
-    if verbose:
-        for plugin in plugins_info:
-            status_color = "green" if plugin["status"] == "active" else "yellow"
-            console.print(f"\n[bold]{plugin['name']}[/bold] v{plugin['version']}")
-            console.print(f"  📝 {plugin['description']}")
-            console.print(f"  📍 {plugin['path']}")
-            console.print(
-                f"  🟢 Status: [{status_color}]{plugin['status']}[/{status_color}]"
-            )
-    else:
+    async def run():
+        await pm.initialize()
+        # Discover and list (do not auto-load)
+        discovered = await pm.discover_plugins()
+        # Attempt to load all to show status/metadata
+        await pm.load_all_plugins()
+        infos = []
+        for name in discovered:
+            info = await pm.get_plugin_info(name)
+            if info:
+                infos.append(info)
+        # Render
+        console.print("[bold cyan]Plugins:[/bold cyan]")
         table = Table(show_header=True, header_style="bold")
         table.add_column("Plugin", style="green")
         table.add_column("Version", style="cyan")
         table.add_column("Description", style="dim")
         table.add_column("Status", justify="center")
-
-        for plugin in plugins_info:
-            status_emoji = "🟢" if plugin["status"] == "active" else "🟡"
-            table.add_row(
-                plugin["name"],
-                plugin["version"],
-                plugin["description"],
-                f"{status_emoji} {plugin['status']}",
-            )
-
+        for info in infos:
+            md = info.get("metadata") or {}
+            status = info.get("status", "unknown")
+            status_emoji = "🟢" if status == "active" else ("🟡" if status == "loaded" else "⚪")
+            table.add_row(md.get("name", "?"), md.get("version", "?"), md.get("description", ""), f"{status_emoji} {status}")
         console.print(table)
+
+    asyncio.run(run())
+
+
+@plugin_app.command("enable")
+def plugin_enable(plugin_name: str = typer.Argument(..., help="Plugin to enable")):
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
+    async def run():
+        await pm.initialize()
+        await pm.load_plugin(plugin_name)
+        ok = await pm.enable_plugin(plugin_name)
+        if ok:
+            await pm.save_plugin_configs()
+        console.print("[green]Enabled[/green]" if ok else "[red]Failed to enable[/red]")
+    asyncio.run(run())
+
+
+@plugin_app.command("disable")
+def plugin_disable(plugin_name: str = typer.Argument(..., help="Plugin to disable")):
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
+    async def run():
+        await pm.initialize()
+        ok = await pm.disable_plugin(plugin_name)
+        if ok:
+            await pm.save_plugin_configs()
+        console.print("[yellow]Disabled[/yellow]" if ok else "[red]Failed to disable[/red]")
+    asyncio.run(run())
+
+
+@plugin_app.command("reload")
+def plugin_reload(plugin_name: str = typer.Argument(..., help="Plugin to reload")):
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
+    async def run():
+        await pm.initialize()
+        ok = await pm.reload_plugin(plugin_name)
+        console.print("[green]Reloaded[/green]" if ok else "[red]Failed to reload[/red]")
+    asyncio.run(run())
+
+
+@plugin_app.command("tools")
+def plugin_tools(
+    plugin: str = typer.Option(None, "--plugin", help="Filter by plugin name")
+):
+    """List tools provided by enabled plugins."""
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
+
+    async def run():
+        await pm.initialize()
+        await pm.discover_plugins()
+        await pm.load_all_plugins()
+        # Enable all configured enabled plugins
+        for info in await pm.list_plugins():
+            name = (info.get("metadata") or {}).get("name")
+            if not name:
+                continue
+            try:
+                await pm.enable_plugin(name)
+            except Exception:
+                pass
+        # Enriched entries with version
+        entries = pm.get_tool_entries(
+            plugins={plugin} if plugin else None
+        )
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Plugin", style="cyan")
+        table.add_column("Version", style="magenta")
+        table.add_column("Tool", style="green")
+        table.add_column("Source", style="cyan")
+        table.add_column("Description", style="dim")
+        if not entries:
+            console.print("[yellow]No plugin tools are currently available.[/yellow]")
+            return
+        for e in entries:
+            tool = e["tool"]
+            desc = getattr(tool, "description", "")
+            source = tool.__class__.__module__
+            table.add_row(e["plugin"], str(e["version"] or "-"), e["tool_name"], source, desc)
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@plugin_app.command("sync-tools")
+def plugin_sync_tools(
+    plugin: list[str] = typer.Option(
+        None,
+        "--plugin",
+        help="Only sync tools from the specified plugin(s). Repeat --plugin to include multiple.",
+    )
+):
+    """Attach enabled plugin tools to the current process agent if available."""
+    global agent
+    if agent is None:
+        console.print("[yellow]No running agent in this process. Start chat first (openagent chat).[/yellow]")
+        return
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
+
+    async def run():
+        await pm.initialize()
+        await pm.discover_plugins()
+        await pm.load_all_plugins()
+        for info in await pm.list_plugins():
+            name = (info.get("metadata") or {}).get("name")
+            if not name:
+                continue
+            # Only enable if no filter or in requested set
+            if plugin and name not in set(plugin):
+                continue
+            try:
+                await pm.enable_plugin(name)
+            except Exception:
+                pass
+        added = pm.register_tools_with_agent(agent, plugins=set(plugin) if plugin else None)
+        console.print(f"[green]Attached {added} plugin tool(s) to the running agent.[/green]")
+
+    asyncio.run(run())
 
 
 @plugin_app.command("install")
+
 def plugin_install(
     source: str = typer.Argument(..., help="Plugin source (path, git repo, or name)"),
     force: bool = typer.Option(False, help="Force reinstall if already exists"),
@@ -2505,35 +2637,31 @@ def plugin_info(
     plugin_name: str = typer.Argument(..., help="Name of plugin to show info for")
 ):
     """Show detailed information about a plugin."""
-    if plugin_name == "weather":
-        info = {
-            "name": "weather",
-            "version": "1.0.0",
-            "description": "Get weather information for locations worldwide",
-            "author": "OpenAgent Contributors",
-            "tags": ["weather", "api", "information"],
-            "tools": ["weather"],
-            "examples": [
-                "What's the weather in Tokyo?",
-                "Check weather conditions in New York",
-                "Is it raining in London?",
-            ],
-        }
+    from openagent.plugins.manager import PluginManager
+    pm = PluginManager()
 
-        console.print(f"\n[bold cyan]{info['name']}[/bold cyan] v{info['version']}")
-        console.print(f"📝 {info['description']}")
-        console.print(f"👤 Author: {info['author']}")
-        console.print(f"🏷️  Tags: {', '.join(info['tags'])}")
-        console.print(f"🛠️  Tools: {', '.join(info['tools'])}")
+    async def run():
+        await pm.initialize()
+        # Ensure metadata is available by discovery
+        await pm.discover_plugins()
+        info = await pm.get_plugin_info(plugin_name)
+        if not info:
+            # Try loading then query
+            await pm.load_plugin(plugin_name)
+            info = await pm.get_plugin_info(plugin_name)
+        if not info:
+            console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+            return
+        md = info.get("metadata") or {}
+        console.print(f"\n[bold cyan]{md.get('name','?')}[/bold cyan] v{md.get('version','?')}")
+        console.print(f"📝 {md.get('description','')}")
+        if md.get('author'):
+            console.print(f"👤 Author: {md.get('author')}")
+        if md.get('keywords'):
+            console.print(f"🏷️  Tags: {', '.join(md.get('keywords'))}")
+        console.print(f"Status: {info.get('status')}")
 
-        console.print("\n[bold]Example Usage:[/bold]")
-        for example in info["examples"]:
-            console.print(f"  • [dim]{example}[/dim]")
-    else:
-        console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
-        console.print(
-            "\nUse [cyan]openagent plugin list[/cyan] to see available plugins."
-        )
+    asyncio.run(run())
 
 
 def main():

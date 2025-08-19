@@ -63,8 +63,14 @@ class PluginManager:
         self._plugin_classes: Dict[str, Type[PluginBase]] = {}
         self._plugin_configs: Dict[str, Dict[str, Any]] = {}
 
+        # Global tool catalog auto-populated from enabled plugins providing tools
+        self._tool_catalog: Dict[str, Any] = {}
+
         # Event system
         self._event_handlers: Dict[str, List[Callable]] = {}
+
+        # Simple in-process message bus (topic -> handlers)
+        self._message_subscribers: Dict[str, List[Callable[[str, Dict[str, Any]], Any]]] = {}
 
         # Thread pool for plugin operations
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -76,6 +82,25 @@ class PluginManager:
         logger.info(
             f"PluginManager initialized with plugin directory: {self.plugin_dir}"
         )
+
+    def on(self, event: str, handler: Callable) -> None:
+        """Register an event handler for a given event name."""
+        self._event_handlers.setdefault(event, []).append(handler)
+
+    async def _emit_event(self, event: str, **kwargs: Any) -> None:
+        """Emit an event to all registered handlers. Best-effort, never throws."""
+        handlers = list(self._event_handlers.get(event, []))
+        for h in handlers:
+            try:
+                if asyncio.iscoroutinefunction(h):
+                    await h(**kwargs)
+                else:
+                    # Execute sync handler in default loop executor to avoid blocking
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, lambda: h(**kwargs))
+            except Exception:
+                # Never fail manager operations due to handler errors
+                continue
 
     async def initialize(self) -> None:
         """Initialize the plugin manager and discover plugins."""
@@ -210,6 +235,17 @@ class PluginManager:
 
             # Create plugin instance
             plugin_config = config or self._plugin_configs.get(plugin_name, {})
+
+            # Validate config against metadata schema (if provided)
+            try:
+                if metadata.config_schema and isinstance(plugin_config, dict):
+                    if not self._validate_config_schema(plugin_config, metadata.config_schema):
+                        logger.error(f"Config schema validation failed for {plugin_name}")
+                        return False
+            except Exception as e:
+                logger.error(f"Config validation error for {plugin_name}: {e}")
+                return False
+
             plugin_instance = plugin_class(plugin_config)
 
             # Set plugin status
@@ -307,11 +343,51 @@ class PluginManager:
         try:
             logger.info(f"Enabling plugin: {plugin_name}")
 
+            # Permission gating
+            metadata = plugin.metadata
+            if metadata and metadata.permissions:
+                if ("execute_commands" in metadata.permissions) and not self.config.get(
+                    "allow_execute_commands", False
+                ):
+                    logger.error(
+                        f"Permission denied: execute_commands not allowed for {plugin_name}"
+                    )
+                    return False
+                if ("network_access" in metadata.permissions) and not self.config.get(
+                    "allow_network", True
+                ):
+                    logger.error(
+                        f"Permission denied: network_access not allowed for {plugin_name}"
+                    )
+                    return False
+
             # Call on_enable callback
             await plugin.on_enable()
 
-            # Set status to active
+            # Set status to active and mark enabled in config
             plugin._set_status(PluginStatus.ACTIVE)
+            try:
+                # Keep PluginConfig in sync for persistence
+                if hasattr(plugin, "_config"):
+                    plugin._config.enabled = True
+                # Some legacy plugins mirror enabled attr
+                if hasattr(plugin, "enabled"):
+                    setattr(plugin, "enabled", True)
+            except Exception:
+                pass
+
+            # Auto-register tools if provided
+            tools_getter = getattr(plugin, "get_tools", None)
+            if callable(tools_getter):
+                try:
+                    tools = tools_getter()
+                    for t in tools or []:
+                        tool_name = getattr(t, "name", t.__class__.__name__)
+                        # Namespace key by plugin to avoid collisions in catalog
+                        key = f"{plugin_name}:{tool_name}"
+                        self._tool_catalog[key] = t
+                except Exception as e:
+                    logger.warning(f"Failed to register tools from {plugin_name}: {e}")
 
             logger.info(f"Plugin {plugin_name} enabled successfully")
 
@@ -324,7 +400,6 @@ class PluginManager:
             logger.error(f"Error enabling plugin {plugin_name}: {e}")
             plugin._set_status(PluginStatus.ERROR, e)
             return False
-
     async def disable_plugin(self, plugin_name: str) -> bool:
         """Disable an active plugin."""
         if plugin_name not in self._plugins:
@@ -343,8 +418,25 @@ class PluginManager:
             # Call on_disable callback
             await plugin.on_disable()
 
-            # Set status to inactive
+            # Set status to inactive and mark disabled in config
             plugin._set_status(PluginStatus.INACTIVE)
+            try:
+                if hasattr(plugin, "_config"):
+                    plugin._config.enabled = False
+                if hasattr(plugin, "enabled"):
+                    setattr(plugin, "enabled", False)
+            except Exception:
+                pass
+
+            # Remove tools from catalog that belong to this plugin (best-effort)
+            try:
+                # Remove all catalog entries for this plugin by namespaced prefix
+                prefix = f"{plugin_name}:"
+                for n in list(self._tool_catalog.keys()):
+                    if n.startswith(prefix):
+                        del self._tool_catalog[n]
+            except Exception:
+                pass
 
             logger.info(f"Plugin {plugin_name} disabled successfully")
 
@@ -442,157 +534,6 @@ class PluginManager:
             if plugin.metadata.plugin_type == plugin_type
         ]
 
-    async def health_check(self) -> Dict[str, Any]:
-        """Perform health check on all plugins."""
-        health_status = {
-            "manager_status": "healthy" if self._is_initialized else "unhealthy",
-            "total_plugins": len(self._plugins),
-            "healthy_plugins": 0,
-            "unhealthy_plugins": 0,
-            "plugin_statuses": {},
-        }
-
-        for plugin_name, plugin in self._plugins.items():
-            try:
-                is_healthy = await plugin.health_check()
-                health_status["plugin_statuses"][plugin_name] = {
-                    "healthy": is_healthy,
-                    "status": plugin.status.value,
-                    "last_error": str(plugin.error) if plugin.error else None,
-                }
-
-                if is_healthy:
-                    health_status["healthy_plugins"] += 1
-                else:
-                    health_status["unhealthy_plugins"] += 1
-
-            except Exception as e:
-                health_status["plugin_statuses"][plugin_name] = {
-                    "healthy": False,
-                    "status": "error",
-                    "last_error": str(e),
-                }
-                health_status["unhealthy_plugins"] += 1
-
-        return health_status
-
-    async def reload_plugin(self, plugin_name: str) -> bool:
-        """Reload a plugin (unload and load again)."""
-        logger.info(f"Reloading plugin: {plugin_name}")
-
-        # Store current config
-        current_config = None
-        if plugin_name in self._plugins:
-            current_config = self._plugins[plugin_name].config.dict()
-
-        # Unload plugin
-        if not await self.unload_plugin(plugin_name):
-            return False
-
-        # Load plugin again
-        return await self.load_plugin(plugin_name, current_config)
-
-    async def load_all_plugins(self) -> Dict[str, bool]:
-        """Load all discovered plugins."""
-        logger.info("Loading all discovered plugins")
-
-        results = {}
-        plugins = await self.registry.list_plugins()
-
-        for plugin_name in plugins:
-            results[plugin_name] = await self.load_plugin(plugin_name)
-
-        loaded_count = sum(1 for success in results.values() if success)
-        logger.info(f"Loaded {loaded_count}/{len(results)} plugins")
-
-        return results
-
-    async def unload_all_plugins(self) -> Dict[str, bool]:
-        """Unload all loaded plugins."""
-        logger.info("Unloading all plugins")
-
-        results = {}
-        plugin_names = list(self._plugins.keys())
-
-        for plugin_name in plugin_names:
-            results[plugin_name] = await self.unload_plugin(plugin_name)
-
-        return results
-
-    # Event system
-    def on(self, event: str, handler: Callable) -> None:
-        """Register an event handler."""
-        if event not in self._event_handlers:
-            self._event_handlers[event] = []
-        self._event_handlers[event].append(handler)
-
-    def off(self, event: str, handler: Callable) -> None:
-        """Unregister an event handler."""
-        if event in self._event_handlers:
-            try:
-                self._event_handlers[event].remove(handler)
-            except ValueError:
-                pass
-
-    async def _emit_event(self, event: str, **kwargs) -> None:
-        """Emit an event to all registered handlers."""
-        if event in self._event_handlers:
-            for handler in self._event_handlers[event]:
-                try:
-                    if asyncio.iscoroutinefunction(handler):
-                        await handler(event, **kwargs)
-                    else:
-                        handler(event, **kwargs)
-                except Exception as e:
-                    logger.error(f"Error in event handler for {event}: {e}")
-
-    # Private methods
-    async def _load_plugin_configs(self) -> None:
-        """Load plugin configurations from files."""
-        config_file = self.plugin_dir / "config.json"
-
-        if config_file.exists():
-            try:
-                with open(config_file, "r") as f:
-                    self._plugin_configs = json.load(f)
-                logger.info(f"Loaded plugin configurations from {config_file}")
-            except Exception as e:
-                logger.error(f"Error loading plugin configurations: {e}")
-
-    async def save_plugin_configs(self) -> None:
-        """Save current plugin configurations to file."""
-        config_file = self.plugin_dir / "config.json"
-
-        try:
-            # Collect current configs
-            current_configs = {}
-            for plugin_name, plugin in self._plugins.items():
-                current_configs[plugin_name] = plugin.config.dict()
-
-            with open(config_file, "w") as f:
-                json.dump(current_configs, f, indent=2)
-
-            logger.info(f"Saved plugin configurations to {config_file}")
-
-        except Exception as e:
-            logger.error(f"Error saving plugin configurations: {e}")
-
-    # Context manager support
-    @asynccontextmanager
-    async def plugin_context(self, plugin_name: str):
-        """Context manager for plugin operations."""
-        plugin = await self.get_plugin(plugin_name)
-        if not plugin:
-            raise ValueError(f"Plugin {plugin_name} not found")
-
-        try:
-            yield plugin
-        except Exception as e:
-            logger.error(f"Error in plugin context for {plugin_name}: {e}")
-            plugin._set_status(PluginStatus.ERROR, e)
-            raise
-
-    # Statistics and metrics
     def get_statistics(self) -> Dict[str, Any]:
         """Get manager statistics."""
         return {
@@ -612,4 +553,217 @@ class PluginManager:
                 )
                 for ptype in PluginType
             },
+            "tool_catalog_size": len(self._tool_catalog),
         }
+
+    async def reload_plugin(self, plugin_name: str) -> bool:
+        """Reload a plugin (unload and load again)."""
+        logger.info(f"Reloading plugin: {plugin_name}")
+        current_config = None
+        if plugin_name in self._plugins:
+            current_config = self._plugins[plugin_name].config.dict()
+        if not await self.unload_plugin(plugin_name):
+            return False
+        return await self.load_plugin(plugin_name, current_config)
+
+    async def load_all_plugins(self) -> Dict[str, bool]:
+        """Load all discovered plugins."""
+        logger.info("Loading all discovered plugins")
+        results: Dict[str, bool] = {}
+        plugins = await self.registry.list_plugins()
+        for plugin_name in plugins:
+            results[plugin_name] = await self.load_plugin(plugin_name)
+        loaded_count = sum(1 for success in results.values() if success)
+        logger.info(f"Loaded {loaded_count}/{len(results)} plugins")
+        return results
+
+    async def unload_all_plugins(self) -> Dict[str, bool]:
+        """Unload all loaded plugins."""
+        logger.info("Unloading all plugins")
+        results: Dict[str, bool] = {}
+        plugin_names = list(self._plugins.keys())
+        for plugin_name in plugin_names:
+            results[plugin_name] = await self.unload_plugin(plugin_name)
+        return results
+
+    def get_tool_catalog(self) -> Dict[str, Any]:
+        """Return the current tool catalog (name -> tool instance)."""
+        return self._tool_catalog.copy()
+
+    def get_tool_entries(self, plugins: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+        """Return enriched tool entries for listing/registration.
+        Each entry: { 'plugin': str, 'version': str|None, 'tool_name': str, 'key': str, 'tool': Any }
+        Optionally filter by a set of plugin names.
+        """
+        entries: List[Dict[str, Any]] = []
+        for key, tool in self._tool_catalog.items():
+            try:
+                plug, tool_name = key.split(":", 1)
+            except ValueError:
+                plug, tool_name = "", key
+            if plugins and plug not in plugins:
+                continue
+            version = None
+            try:
+                pinst = self._plugins.get(plug)
+                if pinst and pinst.metadata:
+                    version = getattr(pinst.metadata, "version", None)
+            except Exception:
+                version = None
+            entries.append({
+                "plugin": plug,
+                "version": version,
+                "tool_name": tool_name,
+                "key": key,
+                "tool": tool,
+            })
+        return entries
+
+    def register_tools_with_agent(self, agent: Any, plugins: Optional[Set[str]] = None) -> int:
+        """Attach tools from the catalog to the given agent, avoiding duplicates.
+        If 'plugins' is provided, only tools from those plugins are registered.
+        Returns the number of tools added.
+        """
+        added = 0
+        try:
+            for key, tool in self._tool_catalog.items():
+                if plugins:
+                    try:
+                        plug_prefix = key.split(":", 1)[0]
+                        if plug_prefix not in plugins:
+                            continue
+                    except Exception:
+                        continue
+                tool_name = getattr(tool, "name", tool.__class__.__name__)
+                try:
+                    existing = getattr(agent, "get_tool", None)
+                    if callable(existing) and existing(tool_name):
+                        continue
+                except Exception:
+                    pass
+                try:
+                    agent.add_tool(tool)
+                    added += 1
+                except Exception:
+                    # continue on individual tool failures
+                    continue
+        except Exception:
+            return added
+        return added
+
+    async def _load_plugin_configs(self) -> None:
+        """Load plugin configurations from files."""
+        config_json = self.plugin_dir / "config.json"
+        config_yaml = self.plugin_dir / "config.yaml"
+        if config_json.exists():
+            try:
+                with open(config_json, "r") as f:
+                    self._plugin_configs = json.load(f)
+                logger.info(f"Loaded plugin configurations from {config_json}")
+            except Exception as e:
+                logger.error(f"Error loading plugin configurations: {e}")
+        elif config_yaml.exists():
+            try:
+                import yaml  # type: ignore
+                with open(config_yaml, "r") as f:
+                    self._plugin_configs = yaml.safe_load(f) or {}
+                logger.info(f"Loaded plugin configurations from {config_yaml}")
+            except Exception as e:
+                logger.error(f"Error loading YAML plugin configurations: {e}")
+        try:
+            for item in self.plugin_dir.iterdir():
+                plugin_name = None
+                plugin_conf: Optional[Dict[str, Any]] = None
+                if item.is_dir():
+                    y = item / "plugin.yaml"
+                    j = item / "plugin.json"
+                    if y.exists():
+                        try:
+                            import yaml  # type: ignore
+                            with open(y, "r") as f:
+                                plugin_conf = yaml.safe_load(f) or {}
+                        except Exception as e:
+                            logger.warning(f"Failed to load {y}: {e}")
+                    elif j.exists():
+                        try:
+                            with open(j, "r") as f:
+                                plugin_conf = json.load(f)
+                        except Exception as e:
+                            logger.warning(f"Failed to load {j}: {e}")
+                    if plugin_conf and isinstance(plugin_conf, dict):
+                        plugin_name = plugin_conf.get("name") or item.name
+                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+                elif item.is_file() and item.suffix in {".py"}:
+                    y = item.with_suffix(".yaml")
+                    j = item.with_suffix(".json")
+                    if y.exists():
+                        try:
+                            import yaml  # type: ignore
+                            with open(y, "r") as f:
+                                plugin_conf = yaml.safe_load(f) or {}
+                        except Exception as e:
+                            logger.warning(f"Failed to load {y}: {e}")
+                    elif j.exists():
+                        try:
+                            with open(j, "r") as f:
+                                plugin_conf = json.load(f)
+                        except Exception as e:
+                            logger.warning(f"Failed to load {j}: {e}")
+                    if plugin_conf and isinstance(plugin_conf, dict):
+                        plugin_name = plugin_conf.get("name") or item.stem
+                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+        except Exception as e:
+            logger.error(f"Error scanning per-plugin configs: {e}")
+
+    # Enhanced JSON-schema-like validator with required, enum, nested objects
+    def _validate_config_schema(self, cfg: Dict[str, Any], schema: Dict[str, Any]) -> bool:
+        def _validate(value, sch) -> bool:
+            stype = sch.get("type")
+            if stype == "object" or (stype is None and isinstance(value, dict)):
+                if not isinstance(value, dict):
+                    return False
+                # required keys
+                required = sch.get("required", [])
+                for req in required:
+                    if req not in value:
+                        return False
+                # properties
+                props = sch.get("properties", {})
+                for k, sub in props.items():
+                    if k in value and not _validate(value[k], sub):
+                        return False
+                return True
+            if stype == "array":
+                if not isinstance(value, list):
+                    return False
+                item_sch = sch.get("items")
+                if item_sch:
+                    for item in value:
+                        if not _validate(item, item_sch):
+                            return False
+                enum_vals = sch.get("enum")
+                if enum_vals is not None and value not in enum_vals:
+                    # Arrays compared as whole when enum provided
+                    return False
+                return True
+            # primitives
+            type_map = {
+                "string": str,
+                "boolean": bool,
+                "number": (int, float),
+                "integer": int,
+            }
+            if stype in type_map and not isinstance(value, type_map[stype]):
+                return False
+            enum_vals = sch.get("enum")
+            if enum_vals is not None and value not in enum_vals:
+                return False
+            return True
+
+        # Ensure object at top level
+        if not isinstance(cfg, dict):
+            return False
+        if schema.get("type") and schema["type"] != "object":
+            return False
+        # Validate each declared property if present
+        return _validate(cfg, schema)

@@ -142,32 +142,56 @@ class PluginLoader:
             # Parse the AST to check for dangerous imports/operations
             tree = ast.parse(source_code)
 
-            # Check for dangerous imports
+            # Check for dangerous imports and calls
             dangerous_imports = {
-                "os",
-                "sys",
                 "subprocess",
-                "exec",
-                "eval",
                 "importlib",
                 "__import__",
-                "compile",
             }
+            hard_block_calls = {
+                ("os", "system"),
+                ("subprocess", "run"),
+                ("subprocess", "Popen"),
+                ("builtins", "eval"),
+                ("builtins", "exec"),
+            }
+
+            warnings_found = []
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         if alias.name in dangerous_imports:
-                            logger.warning(
-                                f"Potentially dangerous import in {plugin_file}: {alias.name}"
+                            warnings_found.append(
+                                f"Potentially dangerous import: {alias.name}"
                             )
-                            # Don't reject, just warn for now
-
                 elif isinstance(node, ast.ImportFrom):
                     if node.module in dangerous_imports:
-                        logger.warning(
-                            f"Potentially dangerous import in {plugin_file}: {node.module}"
+                        warnings_found.append(
+                            f"Potentially dangerous import: {node.module}"
                         )
+                elif isinstance(node, ast.Call):
+                    # Detect attribute calls like os.system, subprocess.run/Popen
+                    func = node.func
+                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                        mod = func.value.id
+                        name = func.attr
+                        if (mod, name) in hard_block_calls:
+                            logger.error(
+                                f"Blocked dangerous call in {plugin_file}: {mod}.{name}"
+                            )
+                            return False
+                    elif isinstance(func, ast.Name):
+                        # direct eval/exec
+                        if ("builtins", func.id) in hard_block_calls:
+                            logger.error(
+                                f"Blocked dangerous call in {plugin_file}: {func.id}()"
+                            )
+                            return False
+
+            # Log warnings but allow
+            for w in warnings_found:
+                logger.warning(f"{plugin_file}: {w}")
 
             return True
 
@@ -336,7 +360,7 @@ class PluginLoader:
                 if (
                     inspect.isclass(obj)
                     and issubclass(obj, PluginBase)
-                    and obj != PluginBase
+                    and obj is not PluginBase
                 ):
                     plugin_classes.append(obj)
 
@@ -344,21 +368,25 @@ class PluginLoader:
                 logger.error(f"No plugin classes found in {metadata.name}")
                 return None
 
+            # Prefer classes defined in this module (avoid imported base classes)
+            local_classes = [c for c in plugin_classes if getattr(c, "__module__", None) == module.__name__]
+            candidates = local_classes or plugin_classes
+
             # If multiple classes, try to find one with matching name
-            if len(plugin_classes) > 1:
-                for cls in plugin_classes:
-                    if (
-                        cls.__name__.lower() == metadata.name.lower()
-                        or cls.__name__.lower().endswith("plugin")
-                    ):
+            if len(candidates) > 1:
+                for cls in candidates:
+                    # Prefer exact or case-insensitive name match to metadata.name
+                    if cls.__name__.lower() == metadata.name.lower():
                         return cls
-
-                # Fallback to first class
+                # Otherwise, prefer a class whose name is not a generic 'BasePlugin'
+                for cls in candidates:
+                    if not cls.__name__.lower().endswith("baseplugin") and cls.__name__.lower().endswith("plugin"):
+                        return cls
+                # Fallback to first local candidate
                 logger.warning(
-                    f"Multiple plugin classes found in {metadata.name}, using {plugin_classes[0].__name__}"
+                    f"Multiple plugin classes found in {metadata.name}, using {candidates[0].__name__}"
                 )
-
-            return plugin_classes[0]
+            return candidates[0]
 
         except Exception as e:
             logger.error(f"Error finding plugin class in {metadata.name}: {e}")

@@ -3,6 +3,9 @@ Base classes and interfaces for the OpenAgent plugin system.
 
 Provides the foundation for creating, loading, and managing plugins
 with proper validation, security, and lifecycle management.
+
+Also provides backwards-compatible shims for older plugin APIs used in
+some unit tests (BasePlugin, PluginError).
 """
 
 import abc
@@ -132,6 +135,20 @@ class PluginConfig(BaseModel):
         extra = "allow"
 
 
+class PluginError(Exception):
+    """Generic plugin error (backwards-compat shim)."""
+
+
+class PluginMessage(BaseModel):
+    """Message used for plugin-to-plugin communication."""
+
+    source: str
+    target: Optional[str] = None  # None means broadcast
+    type: str = Field(..., description="Message type identifier")
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class PluginBase(abc.ABC):
     """
     Abstract base class for all OpenAgent plugins.
@@ -189,6 +206,15 @@ class PluginBase(abc.ABC):
 
     async def on_disable(self) -> None:
         """Called when plugin is disabled."""
+        pass
+
+    # Optional extended lifecycle hooks
+    async def on_suspend(self) -> None:
+        """Called when plugin is suspended (resources may be released)."""
+        pass
+
+    async def on_resume(self) -> None:
+        """Called when plugin is resumed after suspension."""
         pass
 
     async def health_check(self) -> bool:
@@ -367,6 +393,74 @@ class IntegrationPlugin(PluginBase):
             metadata = self.metadata
             self._service_name = metadata.name if metadata else self.__class__.__name__
         return self._service_name
+
+
+# Backwards-compatible BasePlugin shim expected by some tests
+class BasePlugin(PluginBase):
+    """
+    Compatibility layer that maps legacy BasePlugin API onto PluginBase.
+    Expected legacy properties: name (from config), version, description.
+    Expected methods: initialize(), shutdown().
+    """
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        # Legacy attributes
+        self.name: str = self._config.config.get("name") or self._config.config.get(
+            "plugin_name", self.__class__.__name__.lower()
+        )
+        self.enabled: bool = self._config.enabled
+        # Avoid clashing with PluginBase.config property (PluginConfig)
+        self.legacy_config: Dict[str, Any] = self._config.config or {}
+
+    # Legacy properties expected by tests; default to class decorator metadata
+    @property
+    def version(self) -> str:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if meta and getattr(meta, "version", None):
+            return meta.version
+        return str(self.legacy_config.get("version", "0.0.0"))
+
+    @property
+    def description(self) -> str:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if meta and getattr(meta, "description", None):
+            return meta.description
+        return str(self.legacy_config.get("description", ""))
+
+    # Legacy lifecycle method name mapping
+    async def shutdown(self) -> None:  # pragma: no cover - usually overridden
+        await self.cleanup()
+
+    # Provide default metadata implementation so tests need not implement it
+    def get_metadata(self) -> PluginMetadata:
+        meta = getattr(self.__class__, "_plugin_metadata", None)
+        if isinstance(meta, PluginMetadata):
+            # Return the decorated metadata, ensuring name matches instance name
+            return PluginMetadata(
+                name=self.name,
+                version=meta.version,
+                description=meta.description,
+                author=meta.author,
+                plugin_type=meta.plugin_type,
+                dependencies=meta.dependencies,
+                openagent_version=meta.openagent_version,
+                python_version=meta.python_version,
+                config_schema=meta.config_schema,
+                permissions=meta.permissions,
+                homepage=meta.homepage,
+                repository=meta.repository,
+                license=meta.license,
+                keywords=meta.keywords,
+            )
+        # Fallback if decorator not used
+        return PluginMetadata(
+            name=self.name,
+            version=self.version,
+            description=self.description,
+            author=self.legacy_config.get("author", "unknown"),
+            plugin_type=PluginType.CUSTOM,
+        )
 
 
 # Plugin factory function

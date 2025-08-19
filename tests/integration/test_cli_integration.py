@@ -285,6 +285,277 @@ class TestCLIChatMode:
             openagent.cli.agent = original_agent
 
 
+class TestCLIPlugins:
+    """Test CLI plugin commands against real PluginManager wiring."""
+
+    @pytest.fixture
+    def cli_runner(self):
+        from typer.testing import CliRunner
+        from openagent.cli import app
+        return CliRunner(), app
+
+    def test_plugin_list_and_info(self, cli_runner, tmp_path: Path):
+        # Create a minimal plugin to be discovered
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "echo.py").write_text(
+            """
+from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
+@plugin_metadata(name="echo", version="1.0.0", description="Echo", author="t", plugin_type=PluginType.CUSTOM)
+class EchoPlugin(BasePlugin):
+    @property
+    def version(self):
+        return "1.0.0"
+    @property
+    def description(self):
+        return "Echo"
+    async def initialize(self):
+        return True
+    async def cleanup(self):
+        return True
+    async def execute(self, *args, **kwargs):
+        return "ok"
+"""
+        )
+        # Change CWD so PluginManager uses our tmp plugins dir
+        import os
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            runner, app = cli_runner
+            res = runner.invoke(app, ["plugin", "list"])
+            assert res.exit_code == 0
+            assert "Plugins:" in res.stdout
+
+            res2 = runner.invoke(app, ["plugin", "info", "echo"])
+            assert res2.exit_code == 0
+            assert "echo" in res2.stdout
+        finally:
+            os.chdir(old)
+
+    def test_plugin_enable_disable_persist(self, cli_runner, tmp_path: Path):
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "demo.py").write_text(
+            """
+from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
+@plugin_metadata(name="demo", version="1.0.0", description="Demo", author="t", plugin_type=PluginType.CUSTOM)
+class DemoPlugin(BasePlugin):
+    @property
+    def version(self):
+        return "1.0.0"
+    @property
+    def description(self):
+        return "Demo"
+    async def initialize(self):
+        return True
+    async def cleanup(self):
+        return True
+    async def execute(self, *args, **kwargs):
+        return "ok"
+"""
+        )
+        import os, json
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            runner, app = cli_runner
+            res = runner.invoke(app, ["plugin", "enable", "demo"])
+            assert res.exit_code == 0
+            # Verify config.json persisted
+            cfg = json.loads((plugins_dir / "config.json").read_text())
+            assert cfg.get("demo", {}).get("enabled") is True
+
+            res2 = runner.invoke(app, ["plugin", "disable", "demo"])
+            assert res2.exit_code == 0
+            cfg2 = json.loads((plugins_dir / "config.json").read_text())
+            assert cfg2.get("demo", {}).get("enabled") is False
+        finally:
+            os.chdir(old)
+
+
+    def test_plugin_tools_lists_tools(self, cli_runner, tmp_path: Path):
+        # Create plugin and enable
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "tp.py").write_text(
+            """
+from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
+from openagent.core.base import BaseTool, ToolResult
+
+class HelloTool(BaseTool):
+    def __init__(self):
+        super().__init__(name="hello", description="Say hello")
+    async def execute(self, input_data):
+        return ToolResult(success=True, content="hello")
+
+@plugin_metadata(name="tp", version="1.0.0", description="Tool provider", author="t", plugin_type=PluginType.TOOL)
+class TpPlugin(BasePlugin):
+    @property
+    def version(self):
+        return "1.0.0"
+    @property
+    def description(self):
+        return "tp"
+    async def initialize(self):
+        self._tools = [HelloTool()]
+        return True
+    async def cleanup(self):
+        self._tools = []
+        return True
+    def get_tools(self):
+        return list(self._tools)
+    async def execute(self, *args, **kwargs):
+        return "ok"
+"""
+        )
+        (plugins_dir / "config.json").write_text('{"tp": {"enabled": true}}')
+        import os
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            runner, app = cli_runner
+            res = runner.invoke(app, ["plugin", "tools"], catch_exceptions=False)
+            assert res.exit_code == 0
+            assert "hello" in res.stdout
+        finally:
+            os.chdir(old)
+
+    def test_chat_registers_plugin_tools(self, cli_runner, tmp_path: Path):
+        # Prepare a simple tool plugin in a temp plugins dir
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "tp.py").write_text(
+            """
+from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
+from openagent.core.base import BaseTool, ToolResult
+
+class HelloTool(BaseTool):
+    def __init__(self):
+        super().__init__(name="hello", description="Say hello")
+    async def execute(self, input_data):
+        return ToolResult(success=True, content="hello")
+
+@plugin_metadata(name="tp", version="1.0.0", description="Tool provider", author="t", plugin_type=PluginType.TOOL)
+class TpPlugin(BasePlugin):
+    @property
+    def version(self):
+        return "1.0.0"
+    @property
+    def description(self):
+        return "tp"
+    async def initialize(self):
+        self._tools = [HelloTool()]
+        return True
+    async def cleanup(self):
+        self._tools = []
+        return True
+    def get_tools(self):
+        return list(self._tools)
+    async def execute(self, *args, **kwargs):
+        return "ok"
+"""
+        )
+        # Enable via config
+        (plugins_dir / "config.json").write_text('{"tp": {"enabled": true}}')
+
+        # Stub Agent capturing added tools
+        added = []
+        class StubAgent:
+            def __init__(self):
+                self.tools = {}
+                self.llm = type("L", (), {"load_model": AsyncMock()})()
+                self.config = {"safe_mode": True}
+            def add_tool(self, tool):
+                self.tools[getattr(tool, "name", tool.__class__.__name__)] = tool
+                added.append(getattr(tool, "name", tool.__class__.__name__))
+            def get_tool(self, name):
+                return self.tools.get(name)
+
+        # Patch create_agent to return stub, and patch chat_loop to end immediately
+        import os
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            runner, app = cli_runner
+            with patch("openagent.cli.create_agent", return_value=StubAgent()) as _ca, \
+                 patch("openagent.cli.chat_loop", new_callable=lambda: (lambda **kwargs: asyncio.sleep(0))) as _cl:
+                res = runner.invoke(app, ["chat", "--no-auto-serve", "--model", "tiny-llama"], catch_exceptions=False)
+                assert res.exit_code == 0
+                # Ensure tool was added
+                assert "hello" in added
+        finally:
+            os.chdir(old)
+
+    def test_plugin_sync_tools_attaches_to_running_agent(self, cli_runner, tmp_path: Path):
+        # Prepare plugin
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "tp.py").write_text(
+            """
+from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
+from openagent.core.base import BaseTool, ToolResult
+
+class HelloTool(BaseTool):
+    def __init__(self):
+        super().__init__(name="hello", description="Say hello")
+    async def execute(self, input_data):
+        return ToolResult(success=True, content="hello")
+
+@plugin_metadata(name="tp", version="1.0.0", description="Tool provider", author="t", plugin_type=PluginType.TOOL)
+class TpPlugin(BasePlugin):
+    @property
+    def version(self):
+        return "1.0.0"
+    @property
+    def description(self):
+        return "tp"
+    async def initialize(self):
+        self._tools = [HelloTool()]
+        return True
+    async def cleanup(self):
+        self._tools = []
+        return True
+    def get_tools(self):
+        return list(self._tools)
+    async def execute(self, *args, **kwargs):
+        return "ok"
+"""
+        )
+        (plugins_dir / "config.json").write_text('{"tp": {"enabled": true}}')
+
+        # Stub running agent
+        added = []
+        class StubAgent:
+            def __init__(self):
+                self.tools = {}
+            def add_tool(self, tool):
+                name = getattr(tool, "name", tool.__class__.__name__)
+                self.tools[name] = tool
+                added.append(name)
+            def get_tool(self, name):
+                return self.tools.get(name)
+
+        import os
+        old = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            runner, app = cli_runner
+            # Patch global agent in CLI module
+            import openagent.cli as cli_mod
+            orig_agent = getattr(cli_mod, "agent", None)
+            cli_mod.agent = StubAgent()
+            try:
+                res = runner.invoke(app, ["plugin", "sync-tools"], catch_exceptions=False)
+                assert res.exit_code == 0
+                assert "Attached" in res.stdout
+                assert "hello" in added
+            finally:
+                cli_mod.agent = orig_agent
+        finally:
+            os.chdir(old)
+
+
 class TestCLIErrorHandling:
     """Test CLI error handling scenarios."""
 

@@ -54,7 +54,11 @@ async def list_ollama_models(host: Optional[str] = None) -> list[str]:
         return []
 
 
-from .llm_base import BaseLLM
+# Support both legacy and current locations of BaseLLM
+try:
+    from .llm_base import BaseLLM  # type: ignore
+except Exception:  # fallback to consolidated module
+    from .llm import BaseLLM
 
 
 class OllamaLLM(BaseLLM):

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, NamedTuple
 
 try:
     from openagent.core.command_intelligence import (
@@ -17,7 +17,39 @@ try:
 
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
+    # Provide minimal shims so CLI imports work during testing without optional deps
     INTELLIGENCE_AVAILABLE = False
+    class CompletionContext(NamedTuple):
+        current_directory: Path
+        project_type: Optional[str] = None
+        git_repo: bool = False
+        git_branch: Optional[str] = None
+        recent_commands: list[str] = []
+        environment_vars: dict[str, str] = {}
+
+    def create_command_completion_engine():
+        class _Dummy:
+            def suggest_commands(self, partial, ctx, max_suggestions):
+                return []
+            def auto_correct_command(self, command):
+                return None
+        return _Dummy()
+
+    def create_command_templates():
+        class _DummyT:
+            def suggest_templates(self, workspace):
+                return []
+        return _DummyT()
+
+    class ProjectContextEngine:
+        def analyze_workspace(self, current_dir: Path):
+            class _WS:
+                project_type = None
+                class _Git:
+                    is_repo = False
+                    current_branch = None
+                git_context = _Git()
+            return _WS()
 
 
 def zsh_integration_snippet() -> str:
