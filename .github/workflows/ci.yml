@@ -55,6 +55,9 @@ jobs:
         pip install black isort flake8 || echo "Dev tools failed (optional)"
         pip install pytest pytest-asyncio pytest-cov pytest-timeout || echo "Test tools failed (optional)"
         
+        # Install security tools
+        pip install bandit safety || echo "Security tools failed (optional)"
+        
         echo "\n📋 Final package list:"
         pip list
         
@@ -75,6 +78,10 @@ jobs:
         pip install pytest pytest-asyncio pytest-cov pytest-timeout
         if ($LASTEXITCODE -ne 0) { Write-Host "Test tools failed (optional)" }
         
+        # Install security tools
+        pip install bandit safety
+        if ($LASTEXITCODE -ne 0) { Write-Host "Security tools failed (optional)" }
+        
         Write-Host "`n📋 Final package list:"
         pip list
         
@@ -89,9 +96,10 @@ jobs:
         echo "✅ Linting checks completed (issues are non-blocking)"
         
     - name: 🛡️ Run security checks
+      continue-on-error: true
       run: |
-        bandit -r openagent -f json -o bandit-report.json || true
-        safety check --json --output safety-report.json || true
+        python -m bandit -r openagent -f json -o bandit-report.json
+        python -m safety check --json --output safety-report.json
         
     - name: 🧪 Run tests
       run: |
