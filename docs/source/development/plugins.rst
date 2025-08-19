@@ -3,6 +3,16 @@ Plugin Development Guide
 
 OpenAgent features a powerful plugin system that allows you to extend its functionality with custom tools and integrations.
 
+Key Features
+------------
+
+- Lifecycle hooks: initialize, on_load, on_enable, on_disable, on_unload, cleanup
+- Extended hooks: on_suspend, on_resume
+- Configuration: JSON or YAML (plugins/config.json or plugins/config.yaml), with optional per-plugin plugin.yaml next to the plugin code
+- Config schema: Plugins can declare config_schema via @plugin_config_schema; minimal JSON-schema types are validated
+- Messaging: publish/subscribe bus and direct send_to(plugin) for plugin communication
+- Security: AST-based sandboxing blocks eval/exec/os.system/subprocess.run/Popen; permission gating for execute_commands and network_access
+
 Plugin Architecture
 -------------------
 
@@ -60,6 +70,9 @@ Creating Your First Plugin
 Plugin Configuration
 --------------------
 
+Central configuration can be specified in plugins/config.json or plugins/config.yaml.
+Per-plugin configuration can also be placed in a plugin.yaml next to the plugin file.
+
 Plugins can define configuration schemas for user customization:
 
 .. code-block:: python
@@ -87,7 +100,8 @@ Best Practices
 Plugin Examples
 ---------------
 
-See the ``examples/plugins/`` directory for complete plugin implementations:
+- Real loadable plugins: see plugins/echo.py and plugins/tool_provider.py
+- Additional complete examples are available in ``examples/plugins/``:
 
 * **GitHub Plugin**: Interact with GitHub repositories
 * **Docker Plugin**: Manage Docker containers

@@ -1,0 +1,9 @@
+{
+  "echo": {
+    "enabled": true,
+    "config": {
+      "prefix": "[echo] "
+    }
+  }
+}
+

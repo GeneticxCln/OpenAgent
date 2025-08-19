@@ -142,32 +142,56 @@ class PluginLoader:
             # Parse the AST to check for dangerous imports/operations
             tree = ast.parse(source_code)
 
-            # Check for dangerous imports
+            # Check for dangerous imports and calls
             dangerous_imports = {
-                "os",
-                "sys",
                 "subprocess",
-                "exec",
-                "eval",
                 "importlib",
                 "__import__",
-                "compile",
             }
+            hard_block_calls = {
+                ("os", "system"),
+                ("subprocess", "run"),
+                ("subprocess", "Popen"),
+                ("builtins", "eval"),
+                ("builtins", "exec"),
+            }
+
+            warnings_found = []
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         if alias.name in dangerous_imports:
-                            logger.warning(
-                                f"Potentially dangerous import in {plugin_file}: {alias.name}"
+                            warnings_found.append(
+                                f"Potentially dangerous import: {alias.name}"
                             )
-                            # Don't reject, just warn for now
-
                 elif isinstance(node, ast.ImportFrom):
                     if node.module in dangerous_imports:
-                        logger.warning(
-                            f"Potentially dangerous import in {plugin_file}: {node.module}"
+                        warnings_found.append(
+                            f"Potentially dangerous import: {node.module}"
                         )
+                elif isinstance(node, ast.Call):
+                    # Detect attribute calls like os.system, subprocess.run/Popen
+                    func = node.func
+                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                        mod = func.value.id
+                        name = func.attr
+                        if (mod, name) in hard_block_calls:
+                            logger.error(
+                                f"Blocked dangerous call in {plugin_file}: {mod}.{name}"
+                            )
+                            return False
+                    elif isinstance(func, ast.Name):
+                        # direct eval/exec
+                        if ("builtins", func.id) in hard_block_calls:
+                            logger.error(
+                                f"Blocked dangerous call in {plugin_file}: {func.id}()"
+                            )
+                            return False
+
+            # Log warnings but allow
+            for w in warnings_found:
+                logger.warning(f"{plugin_file}: {w}")
 
             return True
 
