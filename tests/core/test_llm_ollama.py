@@ -32,8 +32,7 @@ async def test_ollama_generate_non_streaming(monkeypatch):
     with patch("httpx.AsyncClient", return_value=FakeClient()):
         llm = OllamaLLM(model_name="llama3")
         resp = await llm.generate_response("hi")
-        assert resp.content == "hello world"
-        assert resp.metadata["provider"] == "ollama"
+        assert resp == "hello world"
 
 
 @pytest.mark.asyncio

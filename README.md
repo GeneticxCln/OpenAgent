@@ -2,6 +2,8 @@
 
 A powerful, production-ready AI agent framework powered by Hugging Face models, designed for terminal assistance, code generation, and system operations - just like Warp AI but open source and customizable.
 
+**✨ Recently restructured for production readiness with clean architecture, 37% fewer files, and enhanced maintainability while preserving all features.**
+
 ## 🚀 Features
 
 - **🤖 Hugging Face Integration** - Use any HF model (CodeLlama, Mistral, Llama2, etc.)

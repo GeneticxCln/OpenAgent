@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Hugging Face LLM integration for OpenAgent.
 
@@ -9,7 +11,8 @@ import asyncio
 import logging
 import os
 from threading import Thread
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union, Protocol
+from dataclasses import dataclass
 
 import psutil
 
@@ -47,6 +50,43 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
 from openagent.core.exceptions import AgentError, ConfigError
+
+@dataclass
+class LLMResponse:
+    text: str
+    metadata: Dict[str, Any] | None = None
+    error: Optional[str] = None
+
+
+class BaseLLM(Protocol):
+    """Protocol that all LLM providers must satisfy."""
+
+    model_name: str
+
+    async def generate_response(
+        self,
+        prompt: str,
+        max_new_tokens: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        context: Optional[List[Dict[str, str]]] = None,
+    ) -> str:
+        """Generate a non-streaming response. MUST return a plain string."""
+        ...
+
+    async def stream_generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        context: Optional[List[Dict[str, str]]] = None,
+    ) -> AsyncIterator[str]:
+        """Stream response chunks. MUST yield plain string chunks."""
+        ...
+
+    def get_model_info(self) -> Dict[str, Any]:
+        ...
+
+    async def unload_model(self) -> None:
+        ...
 
 # Expose a module-level torch symbol for tests to patch, without requiring torch to be installed
 try:
@@ -149,15 +189,11 @@ class HuggingFaceLLM:
             load_in_8bit: Load model in 8-bit precision
             load_in_4bit: Load model in 4bit precision
         """
-        # Check if required dependencies are available
+        # Do not hard-fail on missing dependencies; defer to load time so tests can patch
         if not HF_AVAILABLE:
-            raise ImportError(
-                "huggingface_hub is required but not installed. Install with: pip install huggingface_hub"
-            )
+            logger.warning("HuggingFace hub not available; proceeding with lazy loading")
         if not TRANSFORMERS_AVAILABLE:
-            raise ImportError(
-                "transformers is required but not installed. Install with: pip install transformers"
-            )
+            logger.warning("transformers not available; proceeding with lazy loading")
         self.model_name = model_name
         self.max_length = max_length
         self.temperature = temperature
@@ -798,7 +834,7 @@ Please provide:
 llm = None
 
 
-def get_llm(model_name: str = "codellama-7b", **kwargs):
+def get_llm(model_name: str = "codellama-7b", **kwargs) -> Optional[BaseLLM]:
     """Get or create global LLM instance.
 
     Routing rules (local-only):
