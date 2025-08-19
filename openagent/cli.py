@@ -550,7 +550,6 @@ async def chat_loop(
     ws_token_query_key: Optional[str] = None,
 ):
     """Main interactive chat loop."""
-    global agent
 
     console.print("\\n[green]Ready! Type your message or 'help' for commands.[/green]")
     console.print("[dim]Special commands: /help, /status, /reset, /quit[/dim]\\n")
@@ -826,7 +825,6 @@ async def chat_loop(
 
 async def handle_special_command(command: str) -> bool:
     """Handle special chat commands. Returns True to continue chat, False to exit."""
-    global agent
 
     if command == "/help":
         console.print(
@@ -2456,6 +2454,7 @@ def ui_demo(
                 )
 
                 # Keep demo running for interactive use
+                import time
                 start_time = time.time()
                 while time.time() - start_time < duration:
                     await asyncio.sleep(1)
