@@ -150,6 +150,16 @@ The system supports multiple model categories:
 
 ### Configuration and Security
 
+New environment flags:
+- OPENAGENT_EXEC_STRICT: When set to 1/true, shell fallback in CommandExecutor is disabled. Only structured exec-style commands (safe subset) will run.
+- OPENAGENT_SMART_SELECTOR: Enable/disable SmartToolSelector planning (1=on, 0=off). Default: on.
+
+File operations policy:
+- FileManager enforces safe_paths and restricted_paths from the PolicyEngine. Mutating ops (write/copy/move/delete) require:
+  - Path within safe_paths (and not in restricted_paths)
+  - Approval for medium/high risk operations unless confirm=true is provided
+- Violations return clear errors and are logged to the audit trail.
+
 **Environment Variables**:
 - `HUGGINGFACE_TOKEN` or `HF_TOKEN`: For accessing private HF models
 - `DEFAULT_MODEL`: Override default model selection
