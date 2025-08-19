@@ -86,6 +86,7 @@ jobs:
         pip list
         
     - name: 🔍 Run linting (non-blocking)
+      shell: bash
       run: |
         echo "Running flake8 (critical errors only)..."
         flake8 openagent tests --count --select=E9,F63,F7,F82 --show-source --statistics || echo "⚠️ flake8 found some issues (non-blocking)"
@@ -100,15 +101,15 @@ jobs:
       run: |
         python -m bandit -r openagent -f json -o bandit-report.json
         python -m safety check --json --output safety-report.json
-        
     - name: 🧪 Run tests
+      shell: bash
       run: |
         # Set up error handling to continue on failures
         set +e  # Don't exit on errors
         
         # Check if pytest is available
         echo "🔍 Checking pytest availability..."
-        if ! command -v pytest >/dev/null; then
+        if ! command -v pytest > /dev/null; then
           echo "⚠️ pytest not found, trying to install..."
           pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist || echo "⚠️ pytest install failed"
         fi
@@ -150,7 +151,7 @@ jobs:
         
         # Run tests with timeout and skip slow/ML tests on some platforms
         echo "🔍 Running test suite..."
-        if [ -d "tests/" ] && command -v pytest >/dev/null; then
+        if [ -d "tests/" ] && command -v pytest > /dev/null; then
           if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python-version }}" = "3.11" ]; then
             echo "Running full test suite with coverage..."
             pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing --timeout=300
@@ -175,6 +176,7 @@ jobs:
         # Always succeed this job to unblock downstream builds
         echo "✅ Test step completed (all failures are non-blocking for now)"
         exit 0  # Force success
+        
         
     - name: 📊 Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
