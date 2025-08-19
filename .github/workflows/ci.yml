@@ -96,11 +96,22 @@ jobs:
         isort --check-only --diff openagent tests || echo "⚠️ import sorting issues found (non-blocking)"
         echo "✅ Linting checks completed (issues are non-blocking)"
         
-    - name: 🛡️ Run security checks
+    - name: 🛡️ Run security checks (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
       continue-on-error: true
       run: |
         python -m bandit -r openagent -f json -o bandit-report.json
-        python -m safety check --json --output safety-report.json
+        # Safety v2+: set output format via --output and redirect to file
+        python -m safety check --output json > safety-report.json
+    - name: 🛡️ Run security checks (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      continue-on-error: true
+      run: |
+        python -m bandit -r openagent -f json -o bandit-report.json
+        # Safety on Windows: format json and save via Out-File
+        python -m safety check --output json | Out-File -Encoding utf8 safety-report.json
     - name: 🧪 Run tests (Unix)
       if: runner.os != 'Windows'
       shell: bash
