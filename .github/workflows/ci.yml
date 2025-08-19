@@ -101,7 +101,8 @@ jobs:
       run: |
         python -m bandit -r openagent -f json -o bandit-report.json
         python -m safety check --json --output safety-report.json
-    - name: 🧪 Run tests
+    - name: 🧪 Run tests (Unix)
+      if: runner.os != 'Windows'
       shell: bash
       run: |
         # Set up error handling to continue on failures
@@ -116,22 +117,12 @@ jobs:
         
         # Run detailed import debugging
         echo "🔍 Running detailed import test..."
-        python test_import_simple.py
-        if [ $? -ne 0 ]; then
-          echo "⚠️ Import test failed but continuing..."
-        else
-          echo "✅ Import test passed"
-        fi
+        python test_import_simple.py || echo "⚠️ Import test failed but continuing..."
         
         # Run minimal functionality test if it exists
         echo "🔍 Running minimal functionality test..."
         if [ -f "test_minimal.py" ]; then
-          python test_minimal.py
-          if [ $? -ne 0 ]; then
-            echo "⚠️ Minimal test failed but continuing..."
-          else
-            echo "✅ Minimal test passed"
-          fi
+          python test_minimal.py || echo "⚠️ Minimal test failed but continuing..."
         else
           echo "ℹ️ test_minimal.py not found, skipping"
         fi
@@ -139,12 +130,7 @@ jobs:
         # Show test discovery
         echo "🔍 Discovering tests..."
         if [ -d "tests/" ]; then
-          pytest --collect-only -q tests/
-          if [ $? -ne 0 ]; then
-            echo "⚠️ Test discovery failed but continuing..."
-          else
-            echo "✅ Test discovery successful"
-          fi
+          pytest --collect-only -q tests/ || echo "⚠️ Test discovery failed but continuing..."
         else
           echo "ℹ️ tests/ directory not found, skipping test discovery"
         fi
@@ -154,20 +140,10 @@ jobs:
         if [ -d "tests/" ] && command -v pytest > /dev/null; then
           if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python-version }}" = "3.11" ]; then
             echo "Running full test suite with coverage..."
-            pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing --timeout=300
-            if [ $? -ne 0 ]; then
-              echo "⚠️ Tests failed on primary platform but continuing..."
-            else
-              echo "✅ Full test suite passed"
-            fi
+            pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing --timeout=300 || echo "⚠️ Tests failed on primary platform but continuing..."
           else
             echo "Running fast tests only..."
-            pytest tests/ -v -x --tb=short --timeout=120
-            if [ $? -ne 0 ]; then
-              echo "⚠️ Some tests failed but continuing for matrix build..."
-            else
-              echo "✅ Fast tests passed"
-            fi
+            pytest tests/ -v -x --tb=short --timeout=120 || echo "⚠️ Some tests failed but continuing for matrix build..."
           fi
         else
           echo "ℹ️ Skipping test execution (tests/ not found or pytest unavailable)"
@@ -176,6 +152,57 @@ jobs:
         # Always succeed this job to unblock downstream builds
         echo "✅ Test step completed (all failures are non-blocking for now)"
         exit 0  # Force success
+        
+    - name: 🧪 Run tests (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        # Do not stop on errors
+        $ErrorActionPreference = 'Continue'
+        
+        Write-Host "🔍 Checking pytest availability..."
+        if (-not (Get-Command pytest -ErrorAction SilentlyContinue)) {
+          Write-Host "⚠️ pytest not found, trying to install..."
+          pip install pytest pytest-cov pytest-asyncio pytest-timeout pytest-xdist | Out-Null
+        }
+        
+        Write-Host "🔍 Running detailed import test..."
+        python test_import_simple.py
+        if ($LASTEXITCODE -ne 0) { Write-Host "⚠️ Import test failed but continuing..." }
+        
+        Write-Host "🔍 Running minimal functionality test..."
+        if (Test-Path "test_minimal.py") {
+          python test_minimal.py
+          if ($LASTEXITCODE -ne 0) { Write-Host "⚠️ Minimal test failed but continuing..." }
+        } else {
+          Write-Host "ℹ️ test_minimal.py not found, skipping"
+        }
+        
+        Write-Host "🔍 Discovering tests..."
+        if (Test-Path "tests") {
+          pytest --collect-only -q tests/
+          if ($LASTEXITCODE -ne 0) { Write-Host "⚠️ Test discovery failed but continuing..." }
+        } else {
+          Write-Host "ℹ️ tests/ directory not found, skipping test discovery"
+        }
+        
+        Write-Host "🔍 Running test suite..."
+        if (Test-Path "tests" -and (Get-Command pytest -ErrorAction SilentlyContinue)) {
+          if ('${{ matrix.os }}' -eq 'windows-latest' -and '${{ matrix.python-version }}' -eq '3.11') {
+            Write-Host "Running full test suite with coverage..."
+            pytest tests/ -v --cov=openagent --cov-report=xml --cov-report=term-missing --timeout=300
+            if ($LASTEXITCODE -ne 0) { Write-Host "⚠️ Tests failed on primary platform but continuing..." }
+          } else {
+            Write-Host "Running fast tests only..."
+            pytest tests/ -v -x --tb=short --timeout=120
+            if ($LASTEXITCODE -ne 0) { Write-Host "⚠️ Some tests failed but continuing for matrix build..." }
+          }
+        } else {
+          Write-Host "ℹ️ Skipping test execution (tests/ not found or pytest unavailable)"
+        }
+        
+        Write-Host "✅ Test step completed (all failures are non-blocking for now)"
+        exit 0
         
         
     - name: 📊 Upload coverage to Codecov
