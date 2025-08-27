@@ -1520,6 +1520,144 @@ complete -F _openagent_completions openagent
 
 
 @app.command()
+def complete(
+    partial: str = typer.Argument("", help="Partial command to complete"),
+    max: int = typer.Option(10, "--max", help="Maximum suggestions"),
+):
+    """Output newline-delimited command suggestions for the given partial input."""
+    try:
+        from openagent.core.command_intelligence import (
+            CompletionContext,
+            create_command_completion_engine,
+        )
+        from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+        from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+
+        cwd = Path.cwd()
+        ws = ProjectContextEngine().analyze_workspace(cwd)
+        recent = HistoryIntelligence().recent_commands(limit=50)
+        ctx = CompletionContext(
+            current_directory=cwd,
+            project_type=ws.project_type,
+            git_repo=bool(ws.git_context and ws.git_context.is_repo),
+            git_branch=(ws.git_context.current_branch if ws.git_context else None),
+            recent_commands=recent,
+            environment_vars=dict(os.environ),
+        )
+        engine = create_command_completion_engine()
+        suggestions = engine.suggest_commands(partial, ctx, max_suggestions=max)
+        for s in suggestions:
+            print(s.text)
+    except Exception:
+        # Best-effort fallback: nothing to suggest
+        pass
+
+
+@app.command()
+def suggest(
+    input: str = typer.Argument("", help="Command or query to get suggestions for"),
+    intelligent: bool = typer.Option(True, "--intelligent", help="Enable context-aware suggestions"),
+    max: int = typer.Option(10, "--max", help="Maximum suggestions"),
+):
+    """Return newline-delimited suggestions for the current buffer or context."""
+    if not intelligent:
+        # Defer to complete() behavior when not intelligent
+        return complete(input, max)
+    try:
+        from openagent.core.command_intelligence import (
+            CompletionContext,
+            create_command_completion_engine,
+        )
+        from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+        from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+
+        cwd = Path.cwd()
+        ws = ProjectContextEngine().analyze_workspace(cwd)
+        recent = HistoryIntelligence().recent_commands(limit=50)
+        ctx = CompletionContext(
+            current_directory=cwd,
+            project_type=ws.project_type,
+            git_repo=bool(ws.git_context and ws.git_context.is_repo),
+            git_branch=(ws.git_context.current_branch if ws.git_context else None),
+            recent_commands=recent,
+            environment_vars=dict(os.environ),
+        )
+        engine = create_command_completion_engine()
+        suggestions = engine.suggest_commands(input, ctx, max_suggestions=max)
+        for s in suggestions:
+            print(s.text)
+    except Exception:
+        pass
+
+
+@app.command(name="suggest-context")
+def suggest_context():
+    """Return newline-delimited context-based quick suggestions for an empty buffer."""
+    try:
+        from openagent.core.command_intelligence import (
+            CompletionContext,
+            create_command_completion_engine,
+        )
+        from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+        from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+
+        cwd = Path.cwd()
+        ws = ProjectContextEngine().analyze_workspace(cwd)
+        recent = HistoryIntelligence().recent_commands(limit=20)
+        ctx = CompletionContext(
+            current_directory=cwd,
+            project_type=ws.project_type,
+            git_repo=bool(ws.git_context and ws.git_context.is_repo),
+            git_branch=(ws.git_context.current_branch if ws.git_context else None),
+            recent_commands=recent,
+            environment_vars=dict(os.environ),
+        )
+        engine = create_command_completion_engine()
+        # Ask for suggestions with an empty partial
+        suggestions = engine.suggest_commands("", ctx, max_suggestions=10)
+        for s in suggestions:
+            print(s.text)
+    except Exception:
+        pass
+
+
+@app.command()
+def templates(
+    suggest: bool = typer.Option(False, "--suggest", help="Suggest template names"),
+    current_dir: str = typer.Option(None, "--current-dir", help="Workspace directory"),
+):
+    """Return template suggestions for the current context (newline-delimited)."""
+    if not suggest:
+        return
+    try:
+        from openagent.core.command_templates import create_command_templates
+        from openagent.core.context_v2.project_analyzer import ProjectContextEngine
+
+        cwd = Path(current_dir) if current_dir else Path.cwd()
+        ws = ProjectContextEngine().analyze_workspace(cwd)
+        tmpl = create_command_templates()
+        names = [t.name for t in tmpl.suggest_templates(ws)]
+        for n in names:
+            print(n)
+    except Exception:
+        pass
+
+
+@app.command()
+def correct(command: str = typer.Argument("", help="Command to auto-correct")):
+    """Return an auto-corrected command or print nothing if no correction."""
+    try:
+        from openagent.core.command_intelligence import create_command_completion_engine
+
+        engine = create_command_completion_engine()
+        fixed = engine.auto_correct_command(command)
+        if fixed:
+            print(fixed)
+    except Exception:
+        pass
+
+
+@app.command()
 def integrate(
     shell: str = typer.Option("zsh", help="Shell to integrate with (zsh or bash)"),
     apply: bool = typer.Option(
