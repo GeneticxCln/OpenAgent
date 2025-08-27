@@ -803,7 +803,6 @@ class FileManager(BaseTool):
             return {"success": True, "content": f"Deleted {target}", "metadata": {"path": str(target)}}
         except Exception as e:
             return {"success": False, "content": "", "error": f"Delete failed: {e}"}
-            return {"success": False, "content": "", "error": str(e)}
 
     async def _list_directory(self, path: Path) -> Dict[str, Any]:
         """List directory contents."""

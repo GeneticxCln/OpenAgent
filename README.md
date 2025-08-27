@@ -350,6 +350,8 @@ OpenAgent includes built-in security features:
 - **Safe Mode** - Option to explain commands without executing
 - **Input Validation** - All inputs are validated before processing
 
+See also: docs/HARDENING.md for production hardening tips (strict execution, sandboxing, safe paths, RBAC).
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
