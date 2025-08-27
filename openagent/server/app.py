@@ -80,6 +80,14 @@ async def lifespan(app: FastAPI):
     # Initialize default agent (local-only)
     import os
 
+    # Default to strict execution for server contexts unless explicitly overridden
+    try:
+        if os.getenv("OPENAGENT_EXEC_STRICT") is None:
+            os.environ["OPENAGENT_EXEC_STRICT"] = "1"
+            logger.info("OPENAGENT_EXEC_STRICT not set; defaulting to 1 for server context")
+    except Exception:
+        pass
+
     async def _default_model_async():
         # Prefer Ollama local model if available; otherwise tiny-llama
         dm = os.getenv("DEFAULT_MODEL")

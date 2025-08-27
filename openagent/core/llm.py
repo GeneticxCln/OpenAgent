@@ -830,12 +830,29 @@ Please provide:
             logger.info(f"Pre-download not available: {e}")
 
 
-# Global LLM instance
-llm = None
+# Global LLM cache (keyed by model + salient config)
+_llm_cache: Dict[str, BaseLLM] = {}
+
+
+def _make_cache_key(model_name: str, **kwargs) -> str:
+    """Build a conservative cache key for LLM instances.
+
+    We avoid including secrets (e.g., tokens). Key on parameters that materially
+    affect the loaded weights and execution environment.
+    """
+    key_parts = {
+        "model_name": model_name,
+        # Common execution-affecting params (keep minimal to avoid key explosion)
+        "device": kwargs.get("device", None),
+        "load_in_4bit": bool(kwargs.get("load_in_4bit", False)),
+        "load_in_8bit": bool(kwargs.get("load_in_8bit", False)),
+    }
+    # Produce a stable string key
+    return json.dumps(key_parts, sort_keys=True)
 
 
 def get_llm(model_name: str = "codellama-7b", **kwargs) -> Optional[BaseLLM]:
-    """Get or create global LLM instance.
+    """Get or create a cached LLM instance.
 
     Routing rules (local-only):
     - model_name startswith 'ollama:': use Ollama provider (local)
@@ -843,8 +860,7 @@ def get_llm(model_name: str = "codellama-7b", **kwargs) -> Optional[BaseLLM]:
 
     Returns None if dependencies are not available, allowing graceful degradation.
     """
-    global llm
-
+    # Ollama provider (local server)
     if model_name and (model_name == "ollama" or model_name.startswith("ollama:")):
         try:
             from .llm_ollama import OllamaLLM, get_default_ollama_model
@@ -852,7 +868,6 @@ def get_llm(model_name: str = "codellama-7b", **kwargs) -> Optional[BaseLLM]:
             # Resolve base tag
             base = None
             if model_name == "ollama":
-                # Try to auto-pick first installed model
                 try:
                     base = asyncio.get_event_loop().run_until_complete(
                         get_default_ollama_model()
@@ -862,16 +877,35 @@ def get_llm(model_name: str = "codellama-7b", **kwargs) -> Optional[BaseLLM]:
             else:
                 base = model_name.split(":", 1)[1] or None
             base = base or "llama3"
-            return OllamaLLM(model_name=base, **kwargs)
+            cache_key = _make_cache_key(f"ollama:{base}", **kwargs)
+            llm = _llm_cache.get(cache_key)
+            if llm is None:
+                llm = OllamaLLM(model_name=base, **kwargs)
+                _llm_cache[cache_key] = llm
+            return llm
         except ImportError as e:
             logger.warning(f"Ollama LLM not available: {e}")
             return None
 
-    # Default HF path
+    # Hugging Face provider (local)
     try:
-        if llm is None or getattr(llm, "model_name", None) != model_name:
+        cache_key = _make_cache_key(model_name, **kwargs)
+        llm = _llm_cache.get(cache_key)
+        if llm is None:
             llm = HuggingFaceLLM(model_name=model_name, **kwargs)
+            _llm_cache[cache_key] = llm
         return llm
     except ImportError as e:
         logger.warning(f"HuggingFace LLM not available: {e}")
         return None
+
+
+async def unload_all_llms() -> None:
+    """Unload and clear all cached LLMs to free memory."""
+    to_unload = list(_llm_cache.values())
+    _llm_cache.clear()
+    for inst in to_unload:
+        try:
+            await inst.unload_model()  # type: ignore[attr-defined]
+        except Exception:
+            pass

@@ -59,6 +59,10 @@ class CommandPolicy:
     block_high_risk: bool = True
     allow_admin_override: bool = False
     sandbox_mode: bool = False
+    # Sandbox backend: 'auto'|'bwrap'|'firejail'|'unshare'|'container'
+    sandbox_backend: str = "auto"
+    # Optional image for 'container' backend (e.g., 'docker.io/library/alpine:latest')
+    container_image: Optional[str] = None
     audit_enabled: bool = True
 
     # Pattern lists
@@ -590,32 +594,58 @@ class PolicyEngine:
         Returns:
             Sandboxed command string
         """
-        # Use Linux namespaces and resource limits if available
-        sandbox_prefix = []
+        def _cmd_exists(prog: str) -> bool:
+            try:
+                return subprocess.run(["which", prog], capture_output=True).returncode == 0
+            except Exception:
+                return False
 
-        # Check for unshare availability (Linux namespaces)
-        if subprocess.run(["which", "unshare"], capture_output=True).returncode == 0:
-            # Create new namespaces (user, pid, mount, network)
-            sandbox_prefix.append("unshare --user --pid --mount --net --fork")
-
-        # Apply resource limits
+        # Resource limits applied inside sandbox shell
         limits = [
-            "ulimit -t 30",  # CPU time limit (30 seconds)
+            "ulimit -t 30",   # CPU time limit (30 seconds)
             "ulimit -v 524288",  # Virtual memory limit (512MB)
-            "ulimit -f 10240",  # File size limit (10MB)
-            "ulimit -n 256",  # Open files limit
+            "ulimit -f 10240",   # File size limit (10MB)
+            "ulimit -n 256",     # Open files limit
         ]
+        limit_block = "; ".join(limits)
 
-        # Combine sandbox prefix, limits, and command
-        if sandbox_prefix:
-            sandbox_cmd = (
-                f"{' '.join(sandbox_prefix)} sh -c '{'; '.join(limits)}; {command}'"
+        backend = (self.policy.sandbox_backend or "auto").lower()
+
+        # Container backend (explicit opt-in; requires image)
+        if backend == "container":
+            image = self.policy.container_image or ""
+            runner = "podman" if _cmd_exists("podman") else ("docker" if _cmd_exists("docker") else None)
+            if runner and image:
+                # Mount CWD read-only if provided; run minimal sh with limits
+                mount_flag = f"-v {cwd}:{cwd}:ro" if cwd else ""
+                return (
+                    f"{runner} run --rm --network none {mount_flag} {image} sh -lc '" +
+                    f"{limit_block}; {command}'"
+                )
+            # Fall through to auto if container not usable
+            backend = "auto"
+
+        # bubblewrap
+        if backend in {"auto", "bwrap"} and _cmd_exists("bwrap"):
+            # Minimal isolated environment; keep /proc and /dev; tmpfs for /tmp
+            return (
+                "bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc "
+                "--tmpfs /tmp sh -lc '" + f"{limit_block}; {command}'"
             )
-        else:
-            # Fallback to just resource limits
-            sandbox_cmd = f"sh -c '{'; '.join(limits)}; {command}'"
 
-        return sandbox_cmd
+        # firejail
+        if backend in {"auto", "firejail"} and _cmd_exists("firejail"):
+            return "firejail --quiet --private sh -lc '" + f"{limit_block}; {command}'"
+
+        # unshare namespaces if available
+        if backend in {"auto", "unshare"} and _cmd_exists("unshare"):
+            return (
+                "unshare --user --pid --mount --net --fork sh -lc '" +
+                f"{limit_block}; {command}'"
+            )
+
+        # Fallback: no isolation, only resource limits
+        return "sh -lc '" + f"{limit_block}; {command}'"
 
     def verify_audit_integrity(self, start_date: Optional[str] = None) -> bool:
         """
