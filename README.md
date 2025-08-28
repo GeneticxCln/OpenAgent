@@ -121,6 +121,43 @@ Example clients:
 
 For security guidance and RBAC considerations, see SECURITY.md.
 
+## 🧭 Terminal UI: Blocks, Folding, and Shortcuts
+
+OpenAgent’s terminal UI renders commands and outputs as visual blocks with syntax highlighting, folding, and navigation.
+
+Keyboard shortcuts (interactive renderer):
+- j/k: navigate blocks down/up
+- o or Enter: fold/unfold selected block
+- l: toggle block list view (Enter returns to normal view)
+- s / r: save session / reload session (.openagent_session.json in CWD)
+- /: search blocks; n / p: next / previous match
+- e: export blocks to openagent_history.md
+- t: add a tag to the selected block
+- g: go to block by ID or number
+
+Programmatic hooks (for non-interactive usage):
+- save_session(path=None) → Path: persist current blocks/selection to JSON
+- load_session(path=None) → int: restore a session; returns number of blocks
+- search(query: str) → List[int]: record search results and return matching indices
+- export(path=None, format="markdown") → Path: export blocks to a file (markdown or json)
+
+Example:
+```python path=null start=null
+from openagent.ui.renderer import create_terminal_renderer
+
+renderer = create_terminal_renderer()
+# ... create and update blocks ...
+session_path = renderer.save_session()  # ./.openagent_session.json
+results = renderer.search("error")     # list of matching indices
+md_path = renderer.export()             # ./openagent_history.md
+```
+
+Formatter improvements:
+- Markdown: headers, lists, tables, and fenced code blocks rendered with a monokai theme.
+- Diffs: colored with diff lexer (or fallback), including headers/index/hunks.
+- Logs: timestamp and level highlighting (INFO/WARN/ERROR/etc.).
+- Folding heuristics: better grouping for stack traces, test output, git, and logs on large outputs.
+
 ## 🎯 Usage Examples
 
 ### Interactive Chat

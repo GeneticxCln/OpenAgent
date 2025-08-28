@@ -212,10 +212,10 @@ Acceptance criteria
 - [ ] Health endpoint summarizes resource status and recent alerts
 
 J. Terminal UI/UX polish
-- [ ] Syntax highlighting for outputs & diffs; Markdown rendering for AI responses
-- [ ] Implement session save/load, search, and block export; unify with CLI "blocks" history
+- [x] Syntax highlighting for outputs & diffs; Markdown rendering for AI responses
+- [x] Implement session save/load, search, and block export; unify with CLI "blocks" history
 - [ ] Optional interactive TUI mode: key bindings (j/k/o/…) active during chat
-- [ ] Improve folding heuristics for stack traces, diffs, and long logs
+- [x] Improve folding heuristics for stack traces, diffs, and long logs
 
 Acceptance criteria
 - [ ] Visual improvements verified; folding behaves intuitively for large outputs
