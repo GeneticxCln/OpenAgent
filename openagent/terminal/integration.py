@@ -1,24 +1,22 @@
 import os
+import asyncio
+import threading
 from pathlib import Path
 from typing import Literal, Optional, NamedTuple
 
 try:
     from openagent.core.command_intelligence import (
-        CommandCompletionEngine,
         CompletionContext,
         create_command_completion_engine,
     )
-    from openagent.core.command_templates import (
-        CommandTemplates,
-        create_command_templates,
-    )
-    from openagent.core.context_v2.history_intelligence import HistoryIntelligence
+    from openagent.core.command_templates import create_command_templates
     from openagent.core.context_v2.project_analyzer import ProjectContextEngine
 
     INTELLIGENCE_AVAILABLE = True
 except ImportError:
-    # Provide minimal shims so CLI imports work during testing without optional deps
+    # Minimal shims for graceful degradation when intelligence modules are unavailable
     INTELLIGENCE_AVAILABLE = False
+    
     class CompletionContext(NamedTuple):
         current_directory: Path
         project_type: Optional[str] = None
@@ -28,28 +26,50 @@ except ImportError:
         environment_vars: dict[str, str] = {}
 
     def create_command_completion_engine():
-        class _Dummy:
-            def suggest_commands(self, partial, ctx, max_suggestions):
+        class _DummyEngine:
+            async def suggest_commands(self, partial, ctx, max_suggestions):
                 return []
             def auto_correct_command(self, command):
                 return None
-        return _Dummy()
+        return _DummyEngine()
 
     def create_command_templates():
-        class _DummyT:
+        class _DummyTemplates:
             def suggest_templates(self, workspace):
                 return []
-        return _DummyT()
+        return _DummyTemplates()
 
     class ProjectContextEngine:
-        def analyze_workspace(self, current_dir: Path):
-            class _WS:
+        async def analyze_workspace(self, current_dir: Path):
+            class _Workspace:
                 project_type = None
-                class _Git:
+                class _GitContext:
                     is_repo = False
                     current_branch = None
-                git_context = _Git()
-            return _WS()
+                git_context = _GitContext()
+            return _Workspace()
+
+
+def _run_async(coro):
+    """Run an async coroutine safely from sync context.
+
+    If an event loop is running, execute in a background thread with its own loop.
+    Otherwise, run in the current thread's event loop.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        result_container = {}
+        def _runner():
+            result_container['value'] = asyncio.run(coro)
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join()
+        return result_container.get('value')
+    else:
+        return asyncio.run(coro)
 
 
 def zsh_integration_snippet() -> str:
@@ -456,7 +476,7 @@ def create_completion_context() -> Optional[CompletionContext]:
 
         # Detect project type
         project_engine = ProjectContextEngine()
-        workspace = project_engine.analyze_workspace(current_dir)
+        workspace = _run_async(project_engine.analyze_workspace(current_dir))
 
         # Get environment variables
         env_vars = dict(os.environ)
@@ -497,9 +517,9 @@ def get_command_suggestions(
         if not context:
             return []
 
-        completion_engine = create_command_completion_engine()
-        suggestions = completion_engine.suggest_commands(
-            partial_command, context, max_suggestions
+        completion_engine = _run_async(create_command_completion_engine())
+        suggestions = _run_async(
+            completion_engine.suggest_commands(partial_command, context, max_suggestions)
         )
 
         return [s.text for s in suggestions]
@@ -526,7 +546,7 @@ def get_template_suggestions(current_dir: Optional[Path] = None) -> list[str]:
 
         # Get workspace context
         project_engine = ProjectContextEngine()
-        workspace = project_engine.analyze_workspace(current_dir)
+        workspace = _run_async(project_engine.analyze_workspace(current_dir))
 
         if not workspace:
             return []
@@ -554,7 +574,7 @@ def auto_correct_command(command: str) -> Optional[str]:
         return None
 
     try:
-        completion_engine = create_command_completion_engine()
+        completion_engine = _run_async(create_command_completion_engine())
         return completion_engine.auto_correct_command(command)
     except Exception:
         return None

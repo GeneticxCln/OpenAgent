@@ -9,6 +9,7 @@ import asyncio
 import re
 import subprocess
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -314,6 +315,22 @@ class CommandCompletionEngine:
                             context_hint=f"Common flag for {base_cmd}",
                         )
                     )
+                elif partial_flag and len(partial_flag) >= 2:
+                    # Fuzzy flag matching
+                    try:
+                        score = SequenceMatcher(None, partial_flag, flag).ratio()
+                    except Exception:
+                        score = 0.0
+                    if score >= 0.6:
+                        suggestions.append(
+                            CommandSuggestion(
+                                text=flag,
+                                type=SuggestionType.FLAG,
+                                confidence=0.5 + 0.4 * score,
+                                description=f"Fuzzy flag match for {command}",
+                                context_hint=f"Flag for {base_cmd}",
+                            )
+                        )
 
         return suggestions
 
@@ -404,10 +421,16 @@ class CommandCompletionEngine:
     async def _get_completions(
         self, partial: str, context: CompletionContext
     ) -> List[CommandSuggestion]:
-        """Get command completion suggestions."""
+        """Get command completion suggestions (prefix + fuzzy)."""
         suggestions = []
 
-        # Common commands that start with the partial
+        def _fuzzy_score(a: str, b: str) -> float:
+            try:
+                return SequenceMatcher(None, a, b).ratio()
+            except Exception:
+                return 0.0
+
+        # Common commands baseline
         common_commands = [
             "git",
             "docker",
@@ -432,6 +455,7 @@ class CommandCompletionEngine:
             "rsync",
         ]
 
+        # Prefix matches
         for cmd in common_commands:
             if cmd.startswith(partial) and cmd != partial:
                 suggestions.append(
@@ -444,7 +468,22 @@ class CommandCompletionEngine:
                     )
                 )
 
-        # Project-specific command completions
+        # Fuzzy matches (threshold 0.6)
+        if partial and len(partial) >= 2:
+            for cmd in common_commands:
+                score = _fuzzy_score(partial, cmd)
+                if score >= 0.6 and not cmd.startswith(partial):
+                    suggestions.append(
+                        CommandSuggestion(
+                            text=cmd,
+                            type=SuggestionType.COMPLETION,
+                            confidence=0.5 + 0.4 * score,
+                            description=f"Fuzzy match for '{partial}'",
+                            context_hint="Similar command",
+                        )
+                    )
+
+        # Project-specific command completions (prefix + fuzzy)
         if context.project_type and context.project_type in self.project_commands:
             project_cmds = self.project_commands[context.project_type]
             for cmd in project_cmds:
@@ -458,6 +497,18 @@ class CommandCompletionEngine:
                             context_hint=f"Common for {context.project_type.value} projects",
                         )
                     )
+                elif partial and len(partial) >= 3:
+                    score = _fuzzy_score(partial, cmd)
+                    if score >= 0.55:
+                        suggestions.append(
+                            CommandSuggestion(
+                                text=cmd,
+                                type=SuggestionType.CONTEXT,
+                                confidence=0.45 + 0.4 * score,
+                                description=f"Fuzzy project command match",
+                                context_hint=f"{context.project_type.value} project",
+                            )
+                        )
 
         return suggestions
 

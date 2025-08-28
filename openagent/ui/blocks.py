@@ -417,76 +417,211 @@ class BlockRenderer:
         self.console = console or Console()
 
     def render_block(self, block: CommandBlock, width: Optional[int] = None) -> Panel:
-        """Render a single command block."""
-        # Create content based on block type and status
-        content_parts = []
-
-        # Add command if present
+        """Render a single command block with enhanced Warp-style visual formatting."""
+        from rich.layout import Layout
+        from rich.table import Table
+        from rich.console import Group
+        
+        # Create main content group
+        content_elements = []
+        
+        # 1. Command header with status indicator and metadata
         if block.command:
-            cmd_text = Text(block.command, style="bold cyan")
-            content_parts.append(cmd_text)
-
-        # Add output/error based on collapse state
+            cmd_header = self._render_command_header(block)
+            content_elements.append(cmd_header)
+            content_elements.append(Text(""))  # Spacing
+        
+        # 2. Output sections with smart folding
         if not block.collapsed:
             if block.output:
-                output_text = Text(block.output)
-                content_parts.append(output_text)
-
+                output_section = self._render_output_section(block.output, "Output", "white")
+                content_elements.append(output_section)
+                
             if block.error:
-                error_text = Text(block.error, style="bold red")
-                content_parts.append(error_text)
-
+                error_section = self._render_output_section(block.error, "Error", "red")
+                content_elements.append(error_section)
+                
             if block.ai_explanation:
-                ai_text = Text(f"AI: {block.ai_explanation}", style="italic blue")
-                content_parts.append(ai_text)
+                ai_section = self._render_ai_section(block.ai_explanation)
+                content_elements.append(ai_section)
         else:
-            # Show collapsed indicator
-            if block.output or block.error:
-                collapsed_text = Text(
-                    "... (output collapsed, press 'o' to expand)", style="dim"
-                )
-                content_parts.append(collapsed_text)
+            # Collapsed state with summary
+            if block.output or block.error or block.ai_explanation:
+                collapse_info = self._render_collapsed_info(block)
+                content_elements.append(collapse_info)
 
-        # Join content
-        if content_parts:
-            content = Text("\n").join(content_parts)
+        # Combine all content
+        if content_elements:
+            content = Group(*content_elements)
         else:
-            content = Text("(empty block)", style="dim")
+            content = Text("(empty block)", style="dim italic")
 
-        # Determine panel style based on status and selection
-        border_style = (
-            "green"
-            if block.status == BlockStatus.SUCCESS
-            else (
-                "red"
-                if block.status == BlockStatus.ERROR
-                else "yellow" if block.status == BlockStatus.RUNNING else "blue"
-            )
-        )
+        # Enhanced border styling with status-aware colors
+        border_style, title_style = self._get_block_styling(block)
+        
+        # Enhanced title with rich metadata
+        title = self._create_enhanced_title(block, title_style)
 
-        if block.selected:
-            border_style = f"bold {border_style}"
-
-        # Create title with metadata
-        title_parts = [f"Block {block.id}"]
-
-        if block.duration:
-            title_parts.append(f"({block.duration:.2f}s)")
-
-        if block.bookmarked:
-            title_parts.append("📌")
-
-        if block.tags:
-            title_parts.append(f"[{', '.join(block.tags)}]")
-
-        title = " ".join(title_parts)
-
-        # Create panel
+        # Create panel with enhanced styling
         panel = Panel(
-            content, title=title, border_style=border_style, expand=False, width=width
+            content,
+            title=title,
+            border_style=border_style,
+            expand=False,
+            width=width,
+            padding=(0, 1),
+            style="on black" if block.selected else None
         )
 
         return panel
+    
+    def _render_command_header(self, block: CommandBlock) -> Table:
+        """Render an enhanced command header with status and timing info."""
+        table = Table.grid(expand=True)
+        table.add_column("command", ratio=1)
+        table.add_column("meta", justify="right", style="dim")
+        
+        # Status indicator
+        status_indicators = {
+            BlockStatus.PENDING: ("⏳", "yellow"),
+            BlockStatus.RUNNING: ("🔄", "blue"),
+            BlockStatus.SUCCESS: ("✅", "green"),
+            BlockStatus.ERROR: ("❌", "red"),
+            BlockStatus.CANCELLED: ("🚫", "red"),
+        }
+        
+        indicator, color = status_indicators.get(block.status, ("❓", "white"))
+        
+        cmd_text = Text(f"{indicator} {block.command}", style=f"bold {color}")
+        
+        # Metadata (timing, directory, etc.)
+        meta_parts = []
+        if block.duration:
+            meta_parts.append(f"{block.duration:.2f}s")
+        if block.working_directory:
+            meta_parts.append(f"📁 {block.working_directory.split('/')[-1]}")
+        if block.exit_code is not None:
+            meta_parts.append(f"exit:{block.exit_code}")
+            
+        meta_text = " | ".join(meta_parts) if meta_parts else ""
+        
+        table.add_row(cmd_text, Text(meta_text, style="dim"))
+        return table
+    
+    def _render_output_section(self, content: str, section_name: str, style: str) -> Panel:
+        """Render an output section with smart truncation and folding."""
+        lines = content.splitlines()
+        
+        # Smart truncation for very long output
+        if len(lines) > 50:
+            display_lines = lines[:25] + ["... (truncated, press 'o' to see full output)"] + lines[-10:]
+            display_content = "\n".join(display_lines)
+        else:
+            display_content = content
+            
+        # Syntax highlighting for common patterns
+        if section_name == "Error":
+            # Highlight common error patterns
+            display_content = self._highlight_error_patterns(display_content)
+            
+        return Panel(
+            Text(display_content, style=style),
+            title=f"📄 {section_name} ({len(lines)} lines)",
+            title_align="left",
+            border_style="dim",
+            expand=False,
+            padding=(0, 1)
+        )
+    
+    def _render_ai_section(self, explanation: str) -> Panel:
+        """Render AI explanation section with special styling."""
+        return Panel(
+            Text(explanation, style="italic cyan"),
+            title="🤖 AI Assistant",
+            title_align="left",
+            border_style="cyan",
+            expand=False,
+            padding=(0, 1)
+        )
+    
+    def _render_collapsed_info(self, block: CommandBlock) -> Text:
+        """Render collapsed state summary."""
+        info_parts = []
+        if block.output:
+            lines = len(block.output.splitlines())
+            info_parts.append(f"📄 {lines} lines output")
+        if block.error:
+            error_lines = len(block.error.splitlines())
+            info_parts.append(f"❌ {error_lines} lines error")
+        if block.ai_explanation:
+            info_parts.append("🤖 AI explanation")
+            
+        summary = " | ".join(info_parts)
+        return Text(f"▶️ {summary} (press 'o' to expand)", style="dim italic")
+    
+    def _get_block_styling(self, block: CommandBlock) -> tuple[str, str]:
+        """Get enhanced border and title styling based on block state."""
+        base_styles = {
+            BlockStatus.PENDING: ("blue", "blue"),
+            BlockStatus.RUNNING: ("yellow", "yellow"),
+            BlockStatus.SUCCESS: ("green", "green"),
+            BlockStatus.ERROR: ("red", "red"),
+            BlockStatus.CANCELLED: ("magenta", "magenta"),
+        }
+        
+        border_style, title_style = base_styles.get(block.status, ("white", "white"))
+        
+        # Enhanced styling for selected blocks
+        if block.selected:
+            border_style = f"bold {border_style}"
+            title_style = f"bold {title_style}"
+            
+        return border_style, title_style
+    
+    def _create_enhanced_title(self, block: CommandBlock, title_style: str) -> Text:
+        """Create an enhanced title with rich metadata."""
+        # Base title with block ID
+        title_parts = [f"#{block.id}"]
+        
+        # Add timing if available
+        if block.duration:
+            title_parts.append(f"⏱️ {block.duration:.2f}s")
+            
+        # Add bookmark indicator
+        if block.bookmarked:
+            title_parts.append("📌")
+            
+        # Add tags
+        if block.tags:
+            tags_str = ", ".join(block.tags)
+            title_parts.append(f"🏷️ [{tags_str}]")
+            
+        # Add timestamp
+        from datetime import datetime
+        timestamp = datetime.fromtimestamp(block.timestamp).strftime("%H:%M:%S")
+        title_parts.append(f"🕐 {timestamp}")
+        
+        title_text = " | ".join(title_parts)
+        return Text(title_text, style=title_style)
+    
+    def _highlight_error_patterns(self, error_text: str) -> str:
+        """Add basic error pattern highlighting."""
+        # This is a simple implementation - could be enhanced with regex patterns
+        highlighted = error_text
+        
+        # Common error patterns
+        patterns = [
+            ("Error:", "[red]Error:[/red]"),
+            ("Exception:", "[red]Exception:[/red]"),
+            ("Failed", "[red]Failed[/red]"),
+            ("command not found", "[yellow]command not found[/yellow]"),
+            ("Permission denied", "[red]Permission denied[/red]"),
+        ]
+        
+        for pattern, replacement in patterns:
+            highlighted = highlighted.replace(pattern, replacement)
+            
+        return highlighted
 
     def render_block_list(
         self, blocks: List[CommandBlock], width: Optional[int] = None

@@ -63,6 +63,11 @@ auth_manager = AuthManager()
 rate_limiter = RateLimiter()
 agents: Dict[str, Agent] = {}
 
+# Concurrency control for request processing (work queue)
+import os as _os
+_MAX_CONCURRENCY = int(_os.getenv("OPENAGENT_MAX_CONCURRENCY", "4"))
+_semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
+
 # Security
 security = HTTPBearer(auto_error=False)
 
@@ -114,6 +119,12 @@ async def lifespan(app: FastAPI):
         tools=[CommandExecutor(), FileManager(), SystemInfo()],
     )
     agents["default"] = default_agent
+
+    # Background preload of the model to reduce first-token latency
+    try:
+        asyncio.create_task(default_agent.llm.load_model())
+    except Exception:
+        pass
 
     logger.info("OpenAgent server started successfully")
     try:
@@ -280,8 +291,10 @@ async def _stream_chat_response(agent: Agent, message: str):
         and callable(getattr(llm, "stream_generate"))
     ):
         try:
-            async for token in llm.stream_generate(message):
-                yield token
+            # Bound concurrency when streaming directly from LLM
+            async with _semaphore:
+                async for token in llm.stream_generate(message):
+                    yield token
             return
         except Exception as e:
             logger.warning(f"LLM streaming failed, falling back: {e}")
@@ -643,10 +656,11 @@ async def chat(
     agent = agents[agent_name]
 
     try:
-        # Process message
-        start_time = time.time()
-        response = await agent.process_message(request.message)
-        processing_time = time.time() - start_time
+        # Process message (bounded concurrency)
+        async with _semaphore:
+            start_time = time.time()
+            response = await agent.process_message(request.message)
+            processing_time = time.time() - start_time
 
         # Log usage
         if user:
@@ -701,16 +715,29 @@ async def chat_stream(
 
     async def event_generator():
         try:
-            # Send a start event
-            yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
-            async for chunk in _stream_chat_response(agent, request.message):
-                if not chunk:
-                    continue
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
-            # End event
-            yield "event: end\ndata: {}\n\n"
+            # Bound concurrency with semaphore (work queue)
+            async with _semaphore:
+                # Track active sessions metric
+                try:
+                    metrics.update_active_sessions(_MAX_CONCURRENCY - _semaphore._value)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                # Send a start event
+                yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
+                async for chunk in _stream_chat_response(agent, request.message):
+                    if not chunk:
+                        continue
+                    yield f"data: {json.dumps({'content': chunk})}\n\n"
+                # End event
+                yield "event: end\ndata: {}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Update active sessions metric
+            try:
+                metrics.update_active_sessions(_MAX_CONCURRENCY - _semaphore._value)  # type: ignore[attr-defined]
+            except Exception:
+                pass
 
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
     return StreamingResponse(

@@ -354,56 +354,198 @@ class AdvancedFormatter:
     def create_foldable_sections(
         self, content: str, max_section_lines: int = 50
     ) -> List[FoldableSection]:
-        """Create foldable sections from content."""
+        """Create intelligent foldable sections from content."""
         lines = content.splitlines()
-        sections = []
-
-        if len(lines) <= max_section_lines:
-            # Content is short enough, return as single section
+        
+        # If content is short, return as single section
+        if len(lines) <= 10:
             output_type = self.detect_output_type(content)
             section = FoldableSection(
                 title="Output", content=content, output_type=output_type, folded=False
             )
             return [section]
-
-        # Split into logical sections
+        
+        # Try to detect logical sections based on content patterns
+        sections = self._detect_logical_sections(lines)
+        
+        if not sections:
+            # Fallback to size-based sectioning
+            sections = self._create_size_based_sections(lines, max_section_lines)
+        
+        return sections
+    
+    def _detect_logical_sections(self, lines: List[str]) -> List[FoldableSection]:
+        """Detect logical sections in output based on patterns."""
+        sections = []
         current_section_lines = []
         current_title = "Output"
-        section_count = 1
-
-        for i, line in enumerate(lines):
-            current_section_lines.append(line)
-
-            # Check if we should start a new section
-            if len(current_section_lines) >= max_section_lines:
-                section_content = "\n".join(current_section_lines)
-                output_type = self.detect_output_type(section_content)
-
-                section = FoldableSection(
-                    title=f"{current_title} (Part {section_count})",
-                    content=section_content,
-                    output_type=output_type,
-                    folded=True,  # Auto-fold long sections
-                )
-                sections.append(section)
-
-                # Reset for next section
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Detect different section types
+            section_info = self._detect_section_start(line, lines[i:i+5] if i+5 <= len(lines) else lines[i:])
+            
+            if section_info:
+                # Save current section if it has content
+                if current_section_lines:
+                    section_content = "\n".join(current_section_lines)
+                    output_type = self.detect_output_type(section_content)
+                    section = FoldableSection(
+                        title=current_title,
+                        content=section_content,
+                        output_type=output_type,
+                        folded=len(current_section_lines) > 15
+                    )
+                    sections.append(section)
+                
+                # Start new section
                 current_section_lines = []
-                section_count += 1
-
-        # Add remaining lines as final section
+                current_title = section_info["title"]
+                
+                # Collect lines for this section
+                section_end = self._find_section_end(lines[i:], section_info["type"])
+                section_lines = lines[i:i+section_end]
+                current_section_lines.extend(section_lines)
+                i += section_end
+            else:
+                current_section_lines.append(line)
+                i += 1
+        
+        # Add final section
         if current_section_lines:
             section_content = "\n".join(current_section_lines)
             output_type = self.detect_output_type(section_content)
-
             section = FoldableSection(
-                title=f"{current_title} (Part {section_count})",
+                title=current_title,
                 content=section_content,
                 output_type=output_type,
-                folded=len(current_section_lines) > 10,  # Fold if more than 10 lines
+                folded=len(current_section_lines) > 15
             )
             sections.append(section)
-
+        
+        return sections
+    
+    def _detect_section_start(self, line: str, context_lines: List[str]) -> Optional[Dict[str, str]]:
+        """Detect if a line starts a new logical section."""
+        line_stripped = line.strip()
+        
+        # Stack trace section
+        if re.match(r"Traceback \(most recent call last\):", line):
+            return {"title": "🚨 Stack Trace", "type": "traceback"}
+        
+        # Error sections
+        if re.match(r"\w+Error:|\w+Exception:", line):
+            return {"title": "❌ Error Details", "type": "error"}
+        
+        # Compilation/Build output
+        if any(keyword in line.lower() for keyword in ["compiling", "building", "linking"]):
+            return {"title": "🔨 Build Output", "type": "build"}
+        
+        # Test output
+        if re.match(r".*test.*\.\.\.", line, re.IGNORECASE) or "PASSED" in line or "FAILED" in line:
+            return {"title": "🧪 Test Results", "type": "test"}
+        
+        # Package installation
+        if any(keyword in line.lower() for keyword in ["installing", "downloading", "collecting"]):
+            return {"title": "📦 Package Installation", "type": "package"}
+        
+        # Git output
+        if line.startswith(("commit", "Author:", "Date:", "diff --git")):
+            return {"title": "📝 Git Output", "type": "git"}
+        
+        # Docker output
+        if line.startswith(("STEP", "FROM", "RUN", "COPY", "ADD")) or "docker" in line.lower():
+            return {"title": "🐳 Docker Output", "type": "docker"}
+        
+        # Network/HTTP requests
+        if re.match(r"\d{3} (GET|POST|PUT|DELETE)", line) or "HTTP/" in line:
+            return {"title": "🌐 Network Activity", "type": "network"}
+        
+        # Log entries with timestamps
+        if re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", line):
+            return {"title": "📋 Application Logs", "type": "logs"}
+        
+        return None
+    
+    def _find_section_end(self, lines: List[str], section_type: str) -> int:
+        """Find where a logical section ends."""
+        if section_type == "traceback":
+            # Stack trace ends at the exception line
+            for i, line in enumerate(lines[1:], 1):
+                if re.match(r"\w+Error:|\w+Exception:", line):
+                    return i + 1
+            return min(20, len(lines))  # Max 20 lines for traceback
+        
+        elif section_type == "error":
+            # Error details are usually just a few lines
+            return min(5, len(lines))
+        
+        elif section_type == "test":
+            # Test sections end when no more test-related lines
+            for i, line in enumerate(lines[1:], 1):
+                if not any(keyword in line.lower() for keyword in ["test", "passed", "failed", "ok", "error"]):
+                    if i > 3:  # Ensure we get at least a few lines
+                        return i
+            return min(30, len(lines))
+        
+        elif section_type in ["build", "package", "docker"]:
+            # These sections can be quite long
+            return min(50, len(lines))
+        
+        elif section_type == "git":
+            # Git commits and diffs can be long
+            return min(40, len(lines))
+        
+        elif section_type == "logs":
+            # Log sections - group consecutive log entries
+            for i, line in enumerate(lines[1:], 1):
+                if not re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", line):
+                    if i > 5:  # At least 5 log entries
+                        return i
+            return min(25, len(lines))
+        
+        # Default: small sections
+        return min(10, len(lines))
+    
+    def _create_size_based_sections(self, lines: List[str], max_section_lines: int) -> List[FoldableSection]:
+        """Create sections based purely on size when logical detection fails."""
+        sections = []
+        current_section_lines = []
+        section_count = 1
+        
+        for line in lines:
+            current_section_lines.append(line)
+            
+            if len(current_section_lines) >= max_section_lines:
+                section_content = "\n".join(current_section_lines)
+                output_type = self.detect_output_type(section_content)
+                
+                section = FoldableSection(
+                    title=f"📄 Output (Part {section_count})",
+                    content=section_content,
+                    output_type=output_type,
+                    folded=True  # Auto-fold large sections
+                )
+                sections.append(section)
+                
+                current_section_lines = []
+                section_count += 1
+        
+        # Add remaining lines
+        if current_section_lines:
+            section_content = "\n".join(current_section_lines)
+            output_type = self.detect_output_type(section_content)
+            
+            section = FoldableSection(
+                title=f"📄 Output (Part {section_count})" if section_count > 1 else "📄 Output",
+                content=section_content,
+                output_type=output_type,
+                folded=len(current_section_lines) > 15
+            )
+            sections.append(section)
+        
         return sections
 
 

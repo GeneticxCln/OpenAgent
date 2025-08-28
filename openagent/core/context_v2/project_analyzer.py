@@ -15,6 +15,7 @@ import asyncio
 import json
 import subprocess
 import time
+import yaml
 
 class ProjectType(Enum):
     """Supported project types for context-aware assistance."""

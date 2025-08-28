@@ -688,14 +688,14 @@ async def chat_loop(
                             response.content = ""  # streamed already
                             response.metadata = {}
                         except Exception as e:
-                            # Fall back to SSE streaming
+                            # Fall back to SSE streaming with hardened error handling
                             async with httpx.AsyncClient(timeout=None) as client:
                                 try:
                                     headers = _build_http_headers(
                                         accept_sse=True,
                                         auth_header_value=auth_header_value,
                                     )
-                                    # SSE fallback streaming
+                                    # SSE fallback streaming with block UI
                                     current_block = None
                                     accum = ""
                                     if use_blocks and renderer:
@@ -710,8 +710,11 @@ async def chat_loop(
                                     ) as resp:
                                         if resp.status_code != 200:
                                             text = await resp.aread()
+                                            error_msg = text.decode(errors='ignore')[:200]
+                                            # Redact any potential secrets in error message
+                                            error_msg = redact_text(error_msg)
                                             raise RuntimeError(
-                                                f"Server returned {resp.status_code}: {text.decode(errors='ignore')[:200]}"
+                                                f"Server returned {resp.status_code}: {error_msg}"
                                             )
                                         async for line in resp.aiter_lines():
                                             if not line:
@@ -721,11 +724,20 @@ async def chat_loop(
                                                     data = json.loads(line[6:].strip())
                                                     chunk = data.get("content")
                                                     if chunk:
-                                                        console.print(chunk, end="")
+                                                        # Apply redaction to chunk content
+                                                        chunk = redact_text(str(chunk))
+                                                        if use_blocks and renderer and current_block:
+                                                            accum += chunk
+                                                            renderer.update_block_output(current_block, accum)
+                                                        else:
+                                                            console.print(chunk, end="")
                                                 except Exception:
                                                     pass
                                             elif line.startswith("event: end"):
-                                                console.print()
+                                                if use_blocks and renderer and current_block:
+                                                    renderer.complete_block_execution(current_block, exit_code=0)
+                                                else:
+                                                    console.print()
 
                                         class R:
                                             pass
@@ -734,16 +746,24 @@ async def chat_loop(
                                         response.content = ""
                                         response.metadata = {
                                             "fallback": "sse",
-                                            "error_ws": str(e),
+                                            "error_ws": redact_text(str(e)),
                                         }
                                 except Exception as e2:
+                                    # Hardened error handling with block UI and redaction
+                                    error_msg = f"Error streaming: WS failed ({redact_text(str(e))}); SSE failed ({redact_text(str(e2))})"
+                                    
+                                    if use_blocks and renderer:
+                                        error_block = renderer.add_ai_response(error_msg)
+                                        renderer.complete_block_execution(error_block, exit_code=1)
+                                    else:
+                                        console.print(f"\n[red]{error_msg}[/red]")
 
                                     class R:
                                         pass
 
                                     response = R()
-                                    response.content = f"Error streaming: WS failed ({e}); SSE failed ({e2})"
-                                    response.metadata = {}
+                                    response.content = error_msg
+                                    response.metadata = {"error": True, "fallback_failed": True}
                     elif stream:
                         # SSE streaming (primary)
                         current_block = None
