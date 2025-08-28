@@ -25,6 +25,7 @@ print("hello")
     renderable = fmt.format_content(md, t)
     # Should be a Markdown renderable
     from rich.markdown import Markdown
+
     assert isinstance(renderable, Markdown)
 
 
@@ -87,4 +88,8 @@ test_b.py F
     assert len(sections) >= 2
     titles = [s.title for s in sections]
     joined = " ".join(titles)
-    assert "Stack Trace" in joined or "Test Results" in joined or "Application Logs" in joined
+    assert (
+        "Stack Trace" in joined
+        or "Test Results" in joined
+        or "Application Logs" in joined
+    )

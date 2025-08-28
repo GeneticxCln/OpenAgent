@@ -70,7 +70,9 @@ class PluginManager:
         self._event_handlers: Dict[str, List[Callable]] = {}
 
         # Simple in-process message bus (topic -> handlers)
-        self._message_subscribers: Dict[str, List[Callable[[str, Dict[str, Any]], Any]]] = {}
+        self._message_subscribers: Dict[
+            str, List[Callable[[str, Dict[str, Any]], Any]]
+        ] = {}
 
         # Thread pool for plugin operations
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -239,8 +241,12 @@ class PluginManager:
             # Validate config against metadata schema (if provided)
             try:
                 if metadata.config_schema and isinstance(plugin_config, dict):
-                    if not self._validate_config_schema(plugin_config, metadata.config_schema):
-                        logger.error(f"Config schema validation failed for {plugin_name}")
+                    if not self._validate_config_schema(
+                        plugin_config, metadata.config_schema
+                    ):
+                        logger.error(
+                            f"Config schema validation failed for {plugin_name}"
+                        )
                         return False
             except Exception as e:
                 logger.error(f"Config validation error for {plugin_name}: {e}")
@@ -400,6 +406,7 @@ class PluginManager:
             logger.error(f"Error enabling plugin {plugin_name}: {e}")
             plugin._set_status(PluginStatus.ERROR, e)
             return False
+
     async def disable_plugin(self, plugin_name: str) -> bool:
         """Disable an active plugin."""
         if plugin_name not in self._plugins:
@@ -590,7 +597,9 @@ class PluginManager:
         """Return the current tool catalog (name -> tool instance)."""
         return self._tool_catalog.copy()
 
-    def get_tool_entries(self, plugins: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
+    def get_tool_entries(
+        self, plugins: Optional[Set[str]] = None
+    ) -> List[Dict[str, Any]]:
         """Return enriched tool entries for listing/registration.
         Each entry: { 'plugin': str, 'version': str|None, 'tool_name': str, 'key': str, 'tool': Any }
         Optionally filter by a set of plugin names.
@@ -610,16 +619,20 @@ class PluginManager:
                     version = getattr(pinst.metadata, "version", None)
             except Exception:
                 version = None
-            entries.append({
-                "plugin": plug,
-                "version": version,
-                "tool_name": tool_name,
-                "key": key,
-                "tool": tool,
-            })
+            entries.append(
+                {
+                    "plugin": plug,
+                    "version": version,
+                    "tool_name": tool_name,
+                    "key": key,
+                    "tool": tool,
+                }
+            )
         return entries
 
-    def register_tools_with_agent(self, agent: Any, plugins: Optional[Set[str]] = None) -> int:
+    def register_tools_with_agent(
+        self, agent: Any, plugins: Optional[Set[str]] = None
+    ) -> int:
         """Attach tools from the catalog to the given agent, avoiding duplicates.
         If 'plugins' is provided, only tools from those plugins are registered.
         Returns the number of tools added.
@@ -665,6 +678,7 @@ class PluginManager:
         elif config_yaml.exists():
             try:
                 import yaml  # type: ignore
+
                 with open(config_yaml, "r") as f:
                     self._plugin_configs = yaml.safe_load(f) or {}
                 logger.info(f"Loaded plugin configurations from {config_yaml}")
@@ -680,6 +694,7 @@ class PluginManager:
                     if y.exists():
                         try:
                             import yaml  # type: ignore
+
                             with open(y, "r") as f:
                                 plugin_conf = yaml.safe_load(f) or {}
                         except Exception as e:
@@ -692,13 +707,16 @@ class PluginManager:
                             logger.warning(f"Failed to load {j}: {e}")
                     if plugin_conf and isinstance(plugin_conf, dict):
                         plugin_name = plugin_conf.get("name") or item.name
-                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+                        self._plugin_configs.setdefault(plugin_name, {}).update(
+                            plugin_conf
+                        )
                 elif item.is_file() and item.suffix in {".py"}:
                     y = item.with_suffix(".yaml")
                     j = item.with_suffix(".json")
                     if y.exists():
                         try:
                             import yaml  # type: ignore
+
                             with open(y, "r") as f:
                                 plugin_conf = yaml.safe_load(f) or {}
                         except Exception as e:
@@ -711,12 +729,16 @@ class PluginManager:
                             logger.warning(f"Failed to load {j}: {e}")
                     if plugin_conf and isinstance(plugin_conf, dict):
                         plugin_name = plugin_conf.get("name") or item.stem
-                        self._plugin_configs.setdefault(plugin_name, {}).update(plugin_conf)
+                        self._plugin_configs.setdefault(plugin_name, {}).update(
+                            plugin_conf
+                        )
         except Exception as e:
             logger.error(f"Error scanning per-plugin configs: {e}")
 
     # Enhanced JSON-schema-like validator with required, enum, nested objects
-    def _validate_config_schema(self, cfg: Dict[str, Any], schema: Dict[str, Any]) -> bool:
+    def _validate_config_schema(
+        self, cfg: Dict[str, Any], schema: Dict[str, Any]
+    ) -> bool:
         def _validate(value, sch) -> bool:
             stype = sch.get("type")
             if stype == "object" or (stype is None and isinstance(value, dict)):

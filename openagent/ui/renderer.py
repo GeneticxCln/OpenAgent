@@ -8,8 +8,8 @@ command blocks, output folding, and advanced formatting.
 import asyncio
 import threading
 import time
-from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -25,6 +25,7 @@ from .formatting import AdvancedFormatter, OutputFolder, OutputType, ProgressTra
 def create_terminal_renderer():
     """Factory to create a TerminalRenderer without importing rich at import time in CLI tests."""
     return TerminalRenderer()
+
 
 class TerminalRenderer:
     """Main terminal renderer integrating blocks and formatting."""
@@ -43,7 +44,7 @@ class TerminalRenderer:
         self.show_block_list = False
         self.show_help = False
         self.current_mode = "normal"  # normal, block_list, help
-        
+
         # Session and search state
         self._session_path: Path = Path.cwd() / ".openagent_session.json"
         self.search_results: List[int] = []
@@ -344,14 +345,29 @@ class TerminalRenderer:
             return []
         matches = self.block_manager.search_blocks(self.last_search_query)
         target_ids = {b.id for b in matches}
-        self.search_results = [i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids]
+        self.search_results = [
+            i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids
+        ]
         self.search_index = 0 if self.search_results else -1
         return list(self.search_results)
 
-    def export(self, path: Optional[Union[str, Path]] = None, format: str = "markdown") -> Path:
+    def export(
+        self, path: Optional[Union[str, Path]] = None, format: str = "markdown"
+    ) -> Path:
         """Export blocks to file. Returns the path written."""
         content = self.block_manager.export_blocks(format=format)
-        out_path = Path(path) if path is not None else (Path.cwd() / ("openagent_history.md" if format == "markdown" else "openagent_history.json"))
+        out_path = (
+            Path(path)
+            if path is not None
+            else (
+                Path.cwd()
+                / (
+                    "openagent_history.md"
+                    if format == "markdown"
+                    else "openagent_history.json"
+                )
+            )
+        )
         with out_path.open("w", encoding="utf-8") as f:
             f.write(content)
         return out_path
@@ -359,7 +375,9 @@ class TerminalRenderer:
     def _save_session(self):
         """Save current session to a JSON file in the current directory."""
         try:
-            import json, time as _t
+            import json
+            import time as _t
+
             data = {
                 "version": 1,
                 "timestamp": _t.time(),
@@ -377,6 +395,7 @@ class TerminalRenderer:
         """Reload saved session from the default JSON file."""
         try:
             import json
+
             if not self._session_path.exists():
                 self.console.log(f"No session file found at {self._session_path}")
                 return
@@ -386,6 +405,7 @@ class TerminalRenderer:
             self.block_manager.clear_blocks()
             blocks_data = data.get("blocks", [])
             from .blocks import CommandBlock  # local import to avoid cycles
+
             for bd in blocks_data:
                 blk = CommandBlock.from_dict(bd)
                 self.block_manager.add_block(blk)
@@ -417,7 +437,9 @@ class TerminalRenderer:
         # Compute matching indices
         matches = self.block_manager.search_blocks(query)
         target_ids = {b.id for b in matches}
-        self.search_results = [i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids]
+        self.search_results = [
+            i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids
+        ]
         if not self.search_results:
             self.console.log("No matches found")
             return
@@ -507,17 +529,17 @@ class TerminalRenderer:
             else:
                 self._toggle_output_fold()
             return True
-        
+
         # Map regular keys
         if key in self.shortcuts:
             self.shortcuts[key]()
             return True
-        
+
         # Digit selection
         if key.isdigit():
             self._select_block_by_number(int(key))
             return True
-        
+
         return False
 
     def render_progress(self, description: str, total: Optional[int] = None) -> str:

@@ -1,3 +1,4 @@
+# flake8: noqa: E501
 """
 Main Agent implementation for OpenAgent framework.
 
@@ -5,12 +6,12 @@ This module provides the concrete Agent class that implements the BaseAgent
 interface with practical functionality for message processing and tool usage.
 """
 
-import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional, Union
 
 from openagent.core.base import BaseAgent, BaseMessage, BaseTool, ToolResult
-from openagent.core.exceptions import AgentError, ToolError
+from openagent.core.exceptions import AgentError
 
 # Optional import - LLM functionality
 try:
@@ -258,7 +259,9 @@ class Agent(BaseAgent):
         if self.tools:
             # First try SmartToolSelector plan using the model (capability-gated)
             try:
-                use_selector = bool(int(os.environ.get("OPENAGENT_SMART_SELECTOR", "1")))
+                use_selector = bool(
+                    int(os.environ.get("OPENAGENT_SMART_SELECTOR", "1"))
+                )
             except Exception:
                 use_selector = True
             if use_selector and self.llm and hasattr(self.llm, "generate_response"):
@@ -272,7 +275,9 @@ class Agent(BaseAgent):
                         if "sysctx" in locals() and sysctx
                         else None
                     )
-                    plan = await selector.create_tool_plan(input_text, context=sys_ctx_dict)
+                    plan = await selector.create_tool_plan(
+                        input_text, context=sys_ctx_dict
+                    )
                     exec_results = await selector.execute_plan(plan)
                     if exec_results:
                         use_tools = True
@@ -532,7 +537,7 @@ class Agent(BaseAgent):
         Used for both runtime and tests (via __wrapped__).
         """
         # Router-aware, capability-aware relevance gating
-        from openagent.core.router import classify, Route
+        from openagent.core.router import Route, classify
 
         text = input_text.lower()
         tool_name_lower = tool.name.lower()
@@ -541,13 +546,32 @@ class Agent(BaseAgent):
 
         # Map simple categories
         if "git" in tool_name_lower or "repo" in tool_name_lower:
-            return route in {Route.TOOL} or any(k in text for k in ["git", "commit", "branch", "diff", "status"])
+            return route in {Route.TOOL} or any(
+                k in text for k in ["git", "commit", "branch", "diff", "status"]
+            )
         if "command_executor" == tool.name:
-            return route in {Route.TOOL, Route.EXPLAIN_ONLY} or any(k in text for k in ["run", "execute", "command", "bash", "shell"])
+            return route in {Route.TOOL, Route.EXPLAIN_ONLY} or any(
+                k in text for k in ["run", "execute", "command", "bash", "shell"]
+            )
         if "file_manager" == tool.name:
-            return any(k in text for k in ["file", "directory", "read", "write", "list", "move", "copy", "delete"])
+            return any(
+                k in text
+                for k in [
+                    "file",
+                    "directory",
+                    "read",
+                    "write",
+                    "list",
+                    "move",
+                    "copy",
+                    "delete",
+                ]
+            )
         if "system_info" == tool.name:
-            return any(k in text for k in ["cpu", "memory", "disk", "system", "processes", "uptime"])
+            return any(
+                k in text
+                for k in ["cpu", "memory", "disk", "system", "processes", "uptime"]
+            )
 
         # Capability hints
         if caps:
@@ -557,7 +581,19 @@ class Agent(BaseAgent):
                 return True
 
         # Conservative default: only relevant if request contains tool name or clear action verbs
-        verbs = ["run", "execute", "show", "list", "search", "grep", "status", "diff", "open", "read", "write"]
+        verbs = [
+            "run",
+            "execute",
+            "show",
+            "list",
+            "search",
+            "grep",
+            "status",
+            "diff",
+            "open",
+            "read",
+            "write",
+        ]
         return (tool.name in input_text) or any(v in text for v in verbs)
 
     async def _tool_is_relevant(self, tool: BaseTool, input_text: str) -> bool:
@@ -588,7 +624,12 @@ class Agent(BaseAgent):
             )
             raw = await self.llm.generate_response(prompt, system_prompt="Tool Planner")
             import json
-            from openagent.core.tool_contracts import ToolCall, ToolPlan, validate_tool_plan
+
+            from openagent.core.tool_contracts import (
+                ToolCall,
+                ToolPlan,
+                validate_tool_plan,
+            )
 
             # Extract JSON if wrapped
             start = raw.find("{")

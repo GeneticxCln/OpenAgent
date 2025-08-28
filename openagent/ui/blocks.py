@@ -17,9 +17,9 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
-from rich.table import Table
 
 # Enhanced formatting
 from .formatting import AdvancedFormatter
@@ -423,35 +423,46 @@ class BlockRenderer:
 
     def render_block(self, block: CommandBlock, width: Optional[int] = None) -> Panel:
         """Render a single command block with enhanced Warp-style visual formatting."""
+        from rich.console import Group
         from rich.layout import Layout
         from rich.table import Table
-        from rich.console import Group
-        
+
         # Special handling for AI response blocks: render as Markdown
         if block.block_type == BlockType.AI_RESPONSE:
             md = self.formatter.format_content(block.output or "", "markdown")
             title_text = self._create_enhanced_title(block, "cyan")
-            return Panel(md, title=title_text, border_style="cyan", expand=False, width=width, padding=(0,1))
-        
+            return Panel(
+                md,
+                title=title_text,
+                border_style="cyan",
+                expand=False,
+                width=width,
+                padding=(0, 1),
+            )
+
         # Create main content group
         content_elements = []
-        
+
         # 1. Command header with status indicator and metadata
         if block.command:
             cmd_header = self._render_command_header(block)
             content_elements.append(cmd_header)
             content_elements.append(Text(""))  # Spacing
-        
+
         # 2. Output sections with smart folding
         if not block.collapsed:
             if block.output:
-                output_section = self._render_output_section(block.output, "Output", "white", width)
+                output_section = self._render_output_section(
+                    block.output, "Output", "white", width
+                )
                 content_elements.append(output_section)
-                
+
             if block.error:
-                error_section = self._render_output_section(block.error, "Error", "red", width, is_error=True)
+                error_section = self._render_output_section(
+                    block.error, "Error", "red", width, is_error=True
+                )
                 content_elements.append(error_section)
-                
+
             if block.ai_explanation:
                 ai_section = self._render_ai_section(block.ai_explanation, width)
                 content_elements.append(ai_section)
@@ -469,7 +480,7 @@ class BlockRenderer:
 
         # Enhanced border styling with status-aware colors
         border_style, title_style = self._get_block_styling(block)
-        
+
         # Enhanced title with rich metadata
         title = self._create_enhanced_title(block, title_style)
 
@@ -481,17 +492,17 @@ class BlockRenderer:
             expand=False,
             width=width,
             padding=(0, 1),
-            style="on black" if block.selected else None
+            style="on black" if block.selected else None,
         )
 
         return panel
-    
+
     def _render_command_header(self, block: CommandBlock) -> Table:
         """Render an enhanced command header with status and timing info."""
         table = Table.grid(expand=True)
         table.add_column("command", ratio=1)
         table.add_column("meta", justify="right", style="dim")
-        
+
         # Status indicator
         status_indicators = {
             BlockStatus.PENDING: ("⏳", "yellow"),
@@ -500,11 +511,11 @@ class BlockRenderer:
             BlockStatus.ERROR: ("❌", "red"),
             BlockStatus.CANCELLED: ("🚫", "red"),
         }
-        
+
         indicator, color = status_indicators.get(block.status, ("❓", "white"))
-        
+
         cmd_text = Text(f"{indicator} {block.command}", style=f"bold {color}")
-        
+
         # Metadata (timing, directory, etc.)
         meta_parts = []
         if block.duration:
@@ -513,41 +524,50 @@ class BlockRenderer:
             meta_parts.append(f"📁 {block.working_directory.split('/')[-1]}")
         if block.exit_code is not None:
             meta_parts.append(f"exit:{block.exit_code}")
-            
+
         meta_text = " | ".join(meta_parts) if meta_parts else ""
-        
+
         table.add_row(cmd_text, Text(meta_text, style="dim"))
         return table
-    
-    def _render_output_section(self, content: str, section_name: str, style: str, width: Optional[int] = None, is_error: bool = False) -> Panel:
+
+    def _render_output_section(
+        self,
+        content: str,
+        section_name: str,
+        style: str,
+        width: Optional[int] = None,
+        is_error: bool = False,
+    ) -> Panel:
         """Render an output section with smart truncation, detection, and highlighting."""
         lines = content.splitlines()
-        
+
         # Detect output type and format content
         output_type = self.formatter.detect_output_type(content)
         formatted = self.formatter.format_content(content, output_type)
-        
+
         # Smart truncation for very long output (keep tail for context)
         if len(lines) > 200:
             head = "\n".join(lines[:80])
             tail = "\n".join(lines[-30:])
             truncated = f"{head}\n... ({len(lines)-110} lines truncated; press 'o' to expand)\n{tail}"
             formatted = self.formatter.format_content(truncated, output_type)
-        
+
         title_suffix = f" ({len(lines)} lines)" if len(lines) else ""
         ot = str(output_type).lower()
         panel_style = "red" if is_error or "error" in ot else "dim"
-        
+
         return Panel(
             formatted,
             title=f"📄 {section_name}{title_suffix}",
             title_align="left",
             border_style=panel_style,
             expand=False,
-            padding=(0, 1)
+            padding=(0, 1),
         )
-    
-    def _render_ai_section(self, explanation: str, width: Optional[int] = None) -> Panel:
+
+    def _render_ai_section(
+        self, explanation: str, width: Optional[int] = None
+    ) -> Panel:
         """Render AI explanation section with Markdown styling."""
         md = self.formatter.format_content(explanation, "markdown")
         return Panel(
@@ -556,9 +576,9 @@ class BlockRenderer:
             title_align="left",
             border_style="cyan",
             expand=False,
-            padding=(0, 1)
+            padding=(0, 1),
         )
-    
+
     def _render_collapsed_info(self, block: CommandBlock) -> Text:
         """Render collapsed state summary."""
         info_parts = []
@@ -570,10 +590,10 @@ class BlockRenderer:
             info_parts.append(f"❌ {error_lines} lines error")
         if block.ai_explanation:
             info_parts.append("🤖 AI explanation")
-            
+
         summary = " | ".join(info_parts)
         return Text(f"▶️ {summary} (press 'o' to expand)", style="dim italic")
-    
+
     def _get_block_styling(self, block: CommandBlock) -> tuple[str, str]:
         """Get enhanced border and title styling based on block state."""
         base_styles = {
@@ -583,47 +603,48 @@ class BlockRenderer:
             BlockStatus.ERROR: ("red", "red"),
             BlockStatus.CANCELLED: ("magenta", "magenta"),
         }
-        
+
         border_style, title_style = base_styles.get(block.status, ("white", "white"))
-        
+
         # Enhanced styling for selected blocks
         if block.selected:
             border_style = f"bold {border_style}"
             title_style = f"bold {title_style}"
-            
+
         return border_style, title_style
-    
+
     def _create_enhanced_title(self, block: CommandBlock, title_style: str) -> Text:
         """Create an enhanced title with rich metadata."""
         # Base title with block ID
         title_parts = [f"#{block.id}"]
-        
+
         # Add timing if available
         if block.duration:
             title_parts.append(f"⏱️ {block.duration:.2f}s")
-            
+
         # Add bookmark indicator
         if block.bookmarked:
             title_parts.append("📌")
-            
+
         # Add tags
         if block.tags:
             tags_str = ", ".join(block.tags)
             title_parts.append(f"🏷️ [{tags_str}]")
-            
+
         # Add timestamp
         from datetime import datetime
+
         timestamp = datetime.fromtimestamp(block.timestamp).strftime("%H:%M:%S")
         title_parts.append(f"🕐 {timestamp}")
-        
+
         title_text = " | ".join(title_parts)
         return Text(title_text, style=title_style)
-    
+
     def _highlight_error_patterns(self, error_text: str) -> str:
         """Add basic error pattern highlighting."""
         # This is a simple implementation - could be enhanced with regex patterns
         highlighted = error_text
-        
+
         # Common error patterns
         patterns = [
             ("Error:", "[red]Error:[/red]"),
@@ -632,10 +653,10 @@ class BlockRenderer:
             ("command not found", "[yellow]command not found[/yellow]"),
             ("Permission denied", "[red]Permission denied[/red]"),
         ]
-        
+
         for pattern, replacement in patterns:
             highlighted = highlighted.replace(pattern, replacement)
-            
+
         return highlighted
 
     def render_block_list(

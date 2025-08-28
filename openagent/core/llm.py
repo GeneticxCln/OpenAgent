@@ -1,3 +1,4 @@
+# flake8: noqa: E501
 from __future__ import annotations
 
 """
@@ -8,11 +9,12 @@ processing, code generation, and intelligent agent responses.
 """
 
 import asyncio
+import json
 import logging
 import os
-from threading import Thread
-from typing import Any, AsyncIterator, Dict, List, Optional, Union, Protocol
 from dataclasses import dataclass
+from threading import Thread
+from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, Union
 
 import psutil
 
@@ -51,6 +53,7 @@ except ImportError:
 
 from openagent.core.exceptions import AgentError, ConfigError
 
+
 @dataclass
 class LLMResponse:
     text: str
@@ -82,11 +85,10 @@ class BaseLLM(Protocol):
         """Stream response chunks. MUST yield plain string chunks."""
         ...
 
-    def get_model_info(self) -> Dict[str, Any]:
-        ...
+    def get_model_info(self) -> Dict[str, Any]: ...
 
-    async def unload_model(self) -> None:
-        ...
+    async def unload_model(self) -> None: ...
+
 
 # Expose a module-level torch symbol for tests to patch, without requiring torch to be installed
 try:
@@ -191,7 +193,9 @@ class HuggingFaceLLM:
         """
         # Do not hard-fail on missing dependencies; defer to load time so tests can patch
         if not HF_AVAILABLE:
-            logger.warning("HuggingFace hub not available; proceeding with lazy loading")
+            logger.warning(
+                "HuggingFace hub not available; proceeding with lazy loading"
+            )
         if not TRANSFORMERS_AVAILABLE:
             logger.warning("transformers not available; proceeding with lazy loading")
         self.model_name = model_name
@@ -355,8 +359,8 @@ class HuggingFaceLLM:
 
             # Auto-detect model type and load appropriate model
             try:
-                # First try to load with AutoModel to detect type automatically
-                from transformers import AutoConfig, AutoModel
+                # First try to load with AutoConfig to determine architecture
+                from transformers import AutoConfig
 
                 config = AutoConfig.from_pretrained(
                     self.model_path, trust_remote_code=True

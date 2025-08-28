@@ -1,6 +1,6 @@
 from rich.console import Console
 
-from openagent.ui.blocks import BlockRenderer, CommandBlock, BlockType
+from openagent.ui.blocks import BlockRenderer, BlockType, CommandBlock
 
 
 def render_text(renderable) -> str:
@@ -24,7 +24,9 @@ def test_ai_markdown_rendering():
 def test_error_output_presence():
     console = Console(record=True, color_system=None, width=100)
     renderer = BlockRenderer(console)
-    error_text = "Error: build failed\nTraceback (most recent call last):\nException: boom"
+    error_text = (
+        "Error: build failed\nTraceback (most recent call last):\nException: boom"
+    )
     block = CommandBlock(command="make build", error=error_text)
     panel = renderer.render_block(block, width=80)
     text = render_text(panel)

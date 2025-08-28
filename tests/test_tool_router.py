@@ -17,5 +17,7 @@ def test_relevance_simple():
         model_name="tiny-llama",
     )
     assert agent._tool_is_relevant_sync(agent.get_tool("git_tool"), "show git status")
-    assert not agent._tool_is_relevant_sync(agent.get_tool("git_tool"), "what is the weather?")
+    assert not agent._tool_is_relevant_sync(
+        agent.get_tool("git_tool"), "what is the weather?"
+    )
     assert agent._tool_is_relevant_sync(agent.get_tool("file_manager"), "list files")

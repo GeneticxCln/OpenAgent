@@ -32,6 +32,7 @@ class PluginValidator:
 
     def __init__(self):
         import sys as _sys
+
         self.openagent_version = "1.0.0"  # Should be loaded from config
         # Use the running interpreter version for comparisons
         self.python_version = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"

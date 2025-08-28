@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import psutil
+
 try:
     import torch  # type: ignore
 except Exception:  # pragma: no cover - optional runtime dependency
@@ -189,7 +190,9 @@ class ModelCache:
 
         def _load_sync():
             if AutoModelForCausalLM is None or AutoTokenizer is None or torch is None:
-                raise RuntimeError("Transformers/torch not installed; model loading is unavailable in this environment")
+                raise RuntimeError(
+                    "Transformers/torch not installed; model loading is unavailable in this environment"
+                )
             # Default configuration
             config = {
                 "device_map": "auto",

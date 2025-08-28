@@ -1,3 +1,4 @@
+# flake8: noqa: E501
 """
 Command Intelligence System for OpenAgent.
 
@@ -6,13 +7,11 @@ and context-aware suggestions for terminal commands.
 """
 
 import asyncio
-import re
-import subprocess
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Dict, List, Optional
 
 from openagent.core.context_v2.history_intelligence import (
     HistoryIntelligence,

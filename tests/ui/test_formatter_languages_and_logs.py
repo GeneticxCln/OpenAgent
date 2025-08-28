@@ -27,7 +27,9 @@ def test_structured_logs_json_and_nginx():
     fmt = AdvancedFormatter(console)
 
     json_log = '{"time":"2025-08-28T09:00:00Z","level":"ERROR","msg":"failed","method":"GET","path":"/api","status":500}'
-    nginx_log = '127.0.0.1 - - [28/Aug/2025:09:00:01 +0000] "GET /healthz HTTP/1.1" 404 123'
+    nginx_log = (
+        '127.0.0.1 - - [28/Aug/2025:09:00:01 +0000] "GET /healthz HTTP/1.1" 404 123'
+    )
 
     t1 = fmt.detect_output_type(json_log)
     t2 = fmt.detect_output_type(nginx_log)
@@ -55,4 +57,6 @@ tests/test_b.py::test_z FAILED
 """
     sections = fmt.create_foldable_sections(content)
     titles = [s.title for s in sections]
-    assert any("Test Case" in t for t in titles) or any("Test Results" in t for t in titles)
+    assert any("Test Case" in t for t in titles) or any(
+        "Test Results" in t for t in titles
+    )

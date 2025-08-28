@@ -1,4 +1,5 @@
 import asyncio
+
 import pytest
 
 from openagent.core.agent import Agent
@@ -7,7 +8,9 @@ from openagent.core.agent import Agent
 class FakeOllamaLLM:
     model_name = "llama3"
 
-    async def generate_response(self, prompt: str, max_new_tokens=None, system_prompt=None, context=None) -> str:
+    async def generate_response(
+        self, prompt: str, max_new_tokens=None, system_prompt=None, context=None
+    ) -> str:
         return "OK: " + prompt[:10]
 
     async def stream_generate(self, prompt: str, system_prompt=None, context=None):
@@ -33,7 +36,7 @@ async def test_agent_with_fake_ollama_non_streaming(monkeypatch):
 
     monkeypatch.setattr(llm_module, "get_llm", fake_get_llm)
 
-    agent = Agent(name="Test", tools=[] , model_name="ollama:llama3")
+    agent = Agent(name="Test", tools=[], model_name="ollama:llama3")
     resp = await agent.process_message("hello world")
     assert resp.role == "assistant"
     assert isinstance(resp.content, str)

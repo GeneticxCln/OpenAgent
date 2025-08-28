@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Tuple
 
@@ -14,7 +15,9 @@ class ToolPlan:
     calls: List[ToolCall]
 
 
-def validate_tool_plan(plan: ToolPlan, valid_tool_names: Iterable[str]) -> Tuple[bool, Optional[str]]:
+def validate_tool_plan(
+    plan: ToolPlan, valid_tool_names: Iterable[str]
+) -> Tuple[bool, Optional[str]]:
     names = set(valid_tool_names)
     for call in plan.calls:
         if call.name not in names:

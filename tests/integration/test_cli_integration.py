@@ -291,7 +291,9 @@ class TestCLIPlugins:
     @pytest.fixture
     def cli_runner(self):
         from typer.testing import CliRunner
+
         from openagent.cli import app
+
         return CliRunner(), app
 
     def test_plugin_list_and_info(self, cli_runner, tmp_path: Path):
@@ -319,6 +321,7 @@ class EchoPlugin(BasePlugin):
         )
         # Change CWD so PluginManager uses our tmp plugins dir
         import os
+
         old = os.getcwd()
         os.chdir(tmp_path)
         try:
@@ -355,7 +358,9 @@ class DemoPlugin(BasePlugin):
         return "ok"
 """
         )
-        import os, json
+        import json
+        import os
+
         old = os.getcwd()
         os.chdir(tmp_path)
         try:
@@ -372,7 +377,6 @@ class DemoPlugin(BasePlugin):
             assert cfg2.get("demo", {}).get("enabled") is False
         finally:
             os.chdir(old)
-
 
     def test_plugin_tools_lists_tools(self, cli_runner, tmp_path: Path):
         # Create plugin and enable
@@ -411,6 +415,7 @@ class TpPlugin(BasePlugin):
         )
         (plugins_dir / "config.json").write_text('{"tp": {"enabled": true}}')
         import os
+
         old = os.getcwd()
         os.chdir(tmp_path)
         try:
@@ -461,33 +466,48 @@ class TpPlugin(BasePlugin):
 
         # Stub Agent capturing added tools
         added = []
+
         class StubAgent:
             def __init__(self):
                 self.tools = {}
                 self.llm = type("L", (), {"load_model": AsyncMock()})()
                 self.config = {"safe_mode": True}
+
             def add_tool(self, tool):
                 self.tools[getattr(tool, "name", tool.__class__.__name__)] = tool
                 added.append(getattr(tool, "name", tool.__class__.__name__))
+
             def get_tool(self, name):
                 return self.tools.get(name)
 
         # Patch create_agent to return stub, and patch chat_loop to end immediately
         import os
+
         old = os.getcwd()
         os.chdir(tmp_path)
         try:
             runner, app = cli_runner
-            with patch("openagent.cli.create_agent", return_value=StubAgent()) as _ca, \
-                 patch("openagent.cli.chat_loop", new_callable=lambda: (lambda **kwargs: asyncio.sleep(0))) as _cl:
-                res = runner.invoke(app, ["chat", "--no-auto-serve", "--model", "tiny-llama"], catch_exceptions=False)
+            with (
+                patch("openagent.cli.create_agent", return_value=StubAgent()) as _ca,
+                patch(
+                    "openagent.cli.chat_loop",
+                    new_callable=lambda: (lambda **kwargs: asyncio.sleep(0)),
+                ) as _cl,
+            ):
+                res = runner.invoke(
+                    app,
+                    ["chat", "--no-auto-serve", "--model", "tiny-llama"],
+                    catch_exceptions=False,
+                )
                 assert res.exit_code == 0
                 # Ensure tool was added
                 assert "hello" in added
         finally:
             os.chdir(old)
 
-    def test_plugin_sync_tools_attaches_to_running_agent(self, cli_runner, tmp_path: Path):
+    def test_plugin_sync_tools_attaches_to_running_agent(
+        self, cli_runner, tmp_path: Path
+    ):
         # Prepare plugin
         plugins_dir = tmp_path / "plugins"
         plugins_dir.mkdir()
@@ -526,27 +546,34 @@ class TpPlugin(BasePlugin):
 
         # Stub running agent
         added = []
+
         class StubAgent:
             def __init__(self):
                 self.tools = {}
+
             def add_tool(self, tool):
                 name = getattr(tool, "name", tool.__class__.__name__)
                 self.tools[name] = tool
                 added.append(name)
+
             def get_tool(self, name):
                 return self.tools.get(name)
 
         import os
+
         old = os.getcwd()
         os.chdir(tmp_path)
         try:
             runner, app = cli_runner
             # Patch global agent in CLI module
             import openagent.cli as cli_mod
+
             orig_agent = getattr(cli_mod, "agent", None)
             cli_mod.agent = StubAgent()
             try:
-                res = runner.invoke(app, ["plugin", "sync-tools"], catch_exceptions=False)
+                res = runner.invoke(
+                    app, ["plugin", "sync-tools"], catch_exceptions=False
+                )
                 assert res.exit_code == 0
                 assert "Attached" in res.stdout
                 assert "hello" in added

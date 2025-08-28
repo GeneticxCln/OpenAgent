@@ -56,7 +56,9 @@ class PatchEditor(BaseTool):
             encoding = input_data.get("encoding", "utf-8")
 
             if not isinstance(files, list) or not files:
-                return ToolResult(success=False, content="", error="'files' must be a non-empty list")
+                return ToolResult(
+                    success=False, content="", error="'files' must be a non-empty list"
+                )
 
             # Enforce policy for each file (writes within safe_paths only)
             policy_engine = get_policy_engine()
@@ -70,7 +72,11 @@ class PatchEditor(BaseTool):
                 path_str = (f or {}).get("path")
                 hunks = (f or {}).get("hunks") or []
                 if not path_str or not hunks:
-                    return ToolResult(success=False, content="", error="Each file entry must have 'path' and non-empty 'hunks'")
+                    return ToolResult(
+                        success=False,
+                        content="",
+                        error="Each file entry must have 'path' and non-empty 'hunks'",
+                    )
 
                 p = Path(path_str).expanduser().resolve()
 
@@ -80,9 +86,13 @@ class PatchEditor(BaseTool):
                     return ToolResult(success=False, content="", error=policy_err)
 
                 if not p.exists():
-                    return ToolResult(success=False, content="", error=f"File does not exist: {p}")
+                    return ToolResult(
+                        success=False, content="", error=f"File does not exist: {p}"
+                    )
                 if not p.is_file():
-                    return ToolResult(success=False, content="", error=f"Path is not a file: {p}")
+                    return ToolResult(
+                        success=False, content="", error=f"Path is not a file: {p}"
+                    )
 
                 original = p.read_text(encoding=encoding)
                 originals[p] = original
@@ -93,7 +103,9 @@ class PatchEditor(BaseTool):
                     search = (h or {}).get("search")
                     replace = (h or {}).get("replace", "")
                     if search is None:
-                        return ToolResult(success=False, content="", error="Hunk missing 'search'")
+                        return ToolResult(
+                            success=False, content="", error="Hunk missing 'search'"
+                        )
 
                     occurrences = new_content.count(search)
                     if require_unique and occurrences != 1:
@@ -103,7 +115,11 @@ class PatchEditor(BaseTool):
                             error=f"Search text must appear exactly once in {p}, found {occurrences} occurrences",
                         )
                     if occurrences == 0:
-                        return ToolResult(success=False, content="", error=f"Search text not found in {p}")
+                        return ToolResult(
+                            success=False,
+                            content="",
+                            error=f"Search text not found in {p}",
+                        )
 
                     # Replace only first occurrence to preserve intent
                     new_content = new_content.replace(search, replace, 1)
@@ -139,7 +155,9 @@ class PatchEditor(BaseTool):
                                     rp.write_text(content, encoding=encoding)
                                 except Exception:
                                     pass
-                    return ToolResult(success=False, content="", error=f"Failed to write {p}: {e}")
+                    return ToolResult(
+                        success=False, content="", error=f"Failed to write {p}: {e}"
+                    )
 
             # Success: build content summary
             if dry_run:
@@ -195,4 +213,3 @@ class PatchEditor(BaseTool):
             # Be conservative if policy engine fails
             return "Policy engine unavailable"
         return None
-

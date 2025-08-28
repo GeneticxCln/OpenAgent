@@ -1,8 +1,8 @@
-import os
 import asyncio
+import os
 import threading
 from pathlib import Path
-from typing import Literal, Optional, NamedTuple
+from typing import Literal, NamedTuple, Optional
 
 try:
     from openagent.core.command_intelligence import (
@@ -16,7 +16,7 @@ try:
 except ImportError:
     # Minimal shims for graceful degradation when intelligence modules are unavailable
     INTELLIGENCE_AVAILABLE = False
-    
+
     class CompletionContext(NamedTuple):
         current_directory: Path
         project_type: Optional[str] = None
@@ -29,24 +29,30 @@ except ImportError:
         class _DummyEngine:
             async def suggest_commands(self, partial, ctx, max_suggestions):
                 return []
+
             def auto_correct_command(self, command):
                 return None
+
         return _DummyEngine()
 
     def create_command_templates():
         class _DummyTemplates:
             def suggest_templates(self, workspace):
                 return []
+
         return _DummyTemplates()
 
     class ProjectContextEngine:
         async def analyze_workspace(self, current_dir: Path):
             class _Workspace:
                 project_type = None
+
                 class _GitContext:
                     is_repo = False
                     current_branch = None
+
                 git_context = _GitContext()
+
             return _Workspace()
 
 
@@ -62,12 +68,14 @@ def _run_async(coro):
         loop = None
     if loop and loop.is_running():
         result_container = {}
+
         def _runner():
-            result_container['value'] = asyncio.run(coro)
+            result_container["value"] = asyncio.run(coro)
+
         t = threading.Thread(target=_runner, daemon=True)
         t.start()
         t.join()
-        return result_container.get('value')
+        return result_container.get("value")
     else:
         return asyncio.run(coro)
 
@@ -519,7 +527,9 @@ def get_command_suggestions(
 
         completion_engine = _run_async(create_command_completion_engine())
         suggestions = _run_async(
-            completion_engine.suggest_commands(partial_command, context, max_suggestions)
+            completion_engine.suggest_commands(
+                partial_command, context, max_suggestions
+            )
         )
 
         return [s.text for s in suggestions]

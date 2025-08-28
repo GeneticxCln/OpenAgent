@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+
 from ..base import BasePlugin, PluginType, plugin_metadata
 
 
@@ -26,4 +27,3 @@ class TimePlugin(BasePlugin):
 
     async def execute(self) -> str:
         return datetime.now(timezone.utc).isoformat()
-

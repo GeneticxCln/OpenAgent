@@ -49,7 +49,11 @@ class GitHubTool(BaseTool):
             if repo_full and "/" in repo_full:
                 owner, repo = repo_full.split("/", 1)
             else:
-                return ToolResult(success=False, content="", error="Provide 'owner' and 'repo' or 'repo_full' as 'owner/repo'")
+                return ToolResult(
+                    success=False,
+                    content="",
+                    error="Provide 'owner' and 'repo' or 'repo_full' as 'owner/repo'",
+                )
 
         base = f"https://api.github.com/repos/{owner}/{repo}"
 
@@ -60,58 +64,119 @@ class GitHubTool(BaseTool):
                         "state": input_data.get("state", "open"),
                         "per_page": int(input_data.get("per_page", 30)),
                     }
-                    resp = await self._request(client, "GET", f"{base}/pulls", params=params)
+                    resp = await self._request(
+                        client, "GET", f"{base}/pulls", params=params
+                    )
                     if not resp["ok"]:
-                        return ToolResult(success=False, content="", error=resp["error"]) 
+                        return ToolResult(
+                            success=False, content="", error=resp["error"]
+                        )
                     content = json.dumps(resp["json"], indent=2)
-                    return ToolResult(success=True, content=redact_text(content), metadata={"endpoint": f"{base}/pulls"})
+                    return ToolResult(
+                        success=True,
+                        content=redact_text(content),
+                        metadata={"endpoint": f"{base}/pulls"},
+                    )
 
                 if op == "get_pr":
                     number = input_data.get("number")
                     if not number:
-                        return ToolResult(success=False, content="", error="Missing 'number'")
+                        return ToolResult(
+                            success=False, content="", error="Missing 'number'"
+                        )
                     resp = await self._request(client, "GET", f"{base}/pulls/{number}")
                     if not resp["ok"]:
-                        return ToolResult(success=False, content="", error=resp["error"]) 
+                        return ToolResult(
+                            success=False, content="", error=resp["error"]
+                        )
                     content = json.dumps(resp["json"], indent=2)
-                    return ToolResult(success=True, content=redact_text(content), metadata={"endpoint": f"{base}/pulls/{number}"})
+                    return ToolResult(
+                        success=True,
+                        content=redact_text(content),
+                        metadata={"endpoint": f"{base}/pulls/{number}"},
+                    )
 
                 if op == "list_issues":
                     params = {
                         "state": input_data.get("state", "open"),
                         "per_page": int(input_data.get("per_page", 30)),
                     }
-                    resp = await self._request(client, "GET", f"{base}/issues", params=params)
+                    resp = await self._request(
+                        client, "GET", f"{base}/issues", params=params
+                    )
                     if not resp["ok"]:
-                        return ToolResult(success=False, content="", error=resp["error"]) 
+                        return ToolResult(
+                            success=False, content="", error=resp["error"]
+                        )
                     content = json.dumps(resp["json"], indent=2)
-                    return ToolResult(success=True, content=redact_text(content), metadata={"endpoint": f"{base}/issues"})
+                    return ToolResult(
+                        success=True,
+                        content=redact_text(content),
+                        metadata={"endpoint": f"{base}/issues"},
+                    )
 
                 if op == "get_pr_files":
                     number = input_data.get("number")
                     if not number:
-                        return ToolResult(success=False, content="", error="Missing 'number'")
-                    resp = await self._request(client, "GET", f"{base}/pulls/{number}/files")
+                        return ToolResult(
+                            success=False, content="", error="Missing 'number'"
+                        )
+                    resp = await self._request(
+                        client, "GET", f"{base}/pulls/{number}/files"
+                    )
                     if not resp["ok"]:
-                        return ToolResult(success=False, content="", error=resp["error"]) 
+                        return ToolResult(
+                            success=False, content="", error=resp["error"]
+                        )
                     content = json.dumps(resp["json"], indent=2)
-                    return ToolResult(success=True, content=redact_text(content), metadata={"endpoint": f"{base}/pulls/{number}/files"})
+                    return ToolResult(
+                        success=True,
+                        content=redact_text(content),
+                        metadata={"endpoint": f"{base}/pulls/{number}/files"},
+                    )
 
                 if op == "get_pr_diff":
                     number = input_data.get("number")
                     if not number:
-                        return ToolResult(success=False, content="", error="Missing 'number'")
-                    resp = await self._request(client, "GET", f"{base}/pulls/{number}", accept="application/vnd.github.v3.diff")
+                        return ToolResult(
+                            success=False, content="", error="Missing 'number'"
+                        )
+                    resp = await self._request(
+                        client,
+                        "GET",
+                        f"{base}/pulls/{number}",
+                        accept="application/vnd.github.v3.diff",
+                    )
                     if not resp["ok"]:
-                        return ToolResult(success=False, content="", error=resp["error"]) 
+                        return ToolResult(
+                            success=False, content="", error=resp["error"]
+                        )
                     # content is textual diff
-                    return ToolResult(success=True, content=resp["text"], metadata={"endpoint": f"{base}/pulls/{number}", "format": "diff"})
+                    return ToolResult(
+                        success=True,
+                        content=resp["text"],
+                        metadata={
+                            "endpoint": f"{base}/pulls/{number}",
+                            "format": "diff",
+                        },
+                    )
 
-                return ToolResult(success=False, content="", error=f"Unsupported operation: {op}")
+                return ToolResult(
+                    success=False, content="", error=f"Unsupported operation: {op}"
+                )
         except Exception as e:
-            return ToolResult(success=False, content="", error=f"GitHubTool failed: {e}")
+            return ToolResult(
+                success=False, content="", error=f"GitHubTool failed: {e}"
+            )
 
-    async def _request(self, client: httpx.AsyncClient, method: str, url: str, params: Optional[Dict[str, Any]] = None, accept: Optional[str] = None) -> Dict[str, Any]:
+    async def _request(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        accept: Optional[str] = None,
+    ) -> Dict[str, Any]:
         headers = {"Accept": accept or "application/vnd.github+json"}
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if token:
@@ -131,4 +196,3 @@ class GitHubTool(BaseTool):
             return {"ok": True, "json": r.json()}
         except Exception:
             return {"ok": True, "text": r.text}
-

@@ -4,18 +4,17 @@ Project Context Analyzer for OpenAgent.
 Provides Warp-style workspace understanding and project intelligence.
 """
 
+import asyncio
 import json
 import subprocess
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import asyncio
-import json
-import subprocess
-import time
 import yaml
+
 
 class ProjectType(Enum):
     """Supported project types for context-aware assistance."""

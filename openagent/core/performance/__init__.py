@@ -16,11 +16,11 @@ from .memory_manager import (
 )
 from .model_cache import ModelCache, ModelCacheManager, get_model_cache
 from .resource_monitor import (
+    ResourceAlert,
     ResourceMetrics,
     ResourceMonitor,
-    ResourceAlert,
-    ScalingRecommendation,
     ResourceThresholds,
+    ScalingRecommendation,
     get_resource_monitor,
 )
 from .work_queue import (

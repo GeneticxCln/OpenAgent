@@ -66,7 +66,10 @@ agents: Dict[str, Agent] = {}
 
 # Concurrency control for request processing via WorkQueue
 import os as _os
-from openagent.core.performance.work_queue import get_work_queue, RequestPriority, UserLimits as WQUserLimits
+
+from openagent.core.performance.work_queue import RequestPriority
+from openagent.core.performance.work_queue import UserLimits as WQUserLimits
+from openagent.core.performance.work_queue import get_work_queue
 
 work_queue = None  # Initialized in lifespan
 resource_monitor = None  # Initialized in lifespan
@@ -92,7 +95,9 @@ async def lifespan(app: FastAPI):
     try:
         if os.getenv("OPENAGENT_EXEC_STRICT") is None:
             os.environ["OPENAGENT_EXEC_STRICT"] = "1"
-            logger.info("OPENAGENT_EXEC_STRICT not set; defaulting to 1 for server context")
+            logger.info(
+                "OPENAGENT_EXEC_STRICT not set; defaulting to 1 for server context"
+            )
     except Exception:
         pass
 
@@ -125,7 +130,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize global WorkQueue (concurrency/backpressure)
     try:
-        max_workers = int(_os.getenv("OPENAGENT_MAX_WORKERS", _os.getenv("OPENAGENT_MAX_CONCURRENCY", "4")))
+        max_workers = int(
+            _os.getenv(
+                "OPENAGENT_MAX_WORKERS", _os.getenv("OPENAGENT_MAX_CONCURRENCY", "4")
+            )
+        )
         max_queue_size = int(_os.getenv("OPENAGENT_QUEUE_SIZE", "100"))
         default_timeout = float(_os.getenv("OPENAGENT_DEFAULT_TIMEOUT", "60"))
         global work_queue
@@ -199,11 +208,14 @@ async def _apply_user_limits_if_configured(identifier: Optional[str]):
             limits = WQUserLimits(
                 max_concurrent=int(mc) if mc else WQUserLimits().max_concurrent,
                 max_queue_size=int(mq) if mq else WQUserLimits().max_queue_size,
-                rate_limit_per_minute=int(rl) if rl else WQUserLimits().rate_limit_per_minute,
+                rate_limit_per_minute=(
+                    int(rl) if rl else WQUserLimits().rate_limit_per_minute
+                ),
             )
             await work_queue.set_user_limits(identifier, limits)
     except Exception:
         pass
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -444,7 +456,9 @@ async def websocket_endpoint(ws: WebSocket):
                         json.dumps({"event": "start", "agent": agent_name, "queue": qs})
                     )
                 except Exception:
-                    await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+                    await ws.send_text(
+                        json.dumps({"event": "start", "agent": agent_name})
+                    )
 
                 try:
                     await submit_task
@@ -585,7 +599,9 @@ async def websocket_chat(ws: WebSocket):
                         json.dumps({"event": "start", "agent": agent_name, "queue": qs})
                     )
                 except Exception:
-                    await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+                    await ws.send_text(
+                        json.dumps({"event": "start", "agent": agent_name})
+                    )
 
                 try:
                     await submit_task
@@ -940,7 +956,11 @@ async def chat_stream(
     # Prepare streaming queue and task submission
     chunks_q: asyncio.Queue[str] = asyncio.Queue()
     request_id = str(_uuid.uuid4())
-    user_id = user.id if user else (rate_limiter.get_client_ip(http_request) if http_request else None)
+    user_id = (
+        user.id
+        if user
+        else (rate_limiter.get_client_ip(http_request) if http_request else None)
+    )
 
     async def _task_stream(agent_ref: Agent, msg: str):
         async for token in _stream_chat_response(agent_ref, msg):

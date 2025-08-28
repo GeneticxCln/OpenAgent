@@ -16,7 +16,7 @@ async def test_yaml_config_and_schema_validation(tmp_path: Path):
     plugin_py = plugins_dir / "cfgplug.py"
     plugin_py.write_text(
         textwrap.dedent(
-            '''
+            """
             from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
 
             @plugin_metadata(
@@ -39,7 +39,7 @@ async def test_yaml_config_and_schema_validation(tmp_path: Path):
                     return True
                 async def execute(self, *args, **kwargs):
                     return "ok"
-            '''
+            """
         )
     )
 
@@ -62,9 +62,7 @@ async def test_yaml_config_and_schema_validation(tmp_path: Path):
                         "mode": {"type": "string", "enum": ["a", "b"]},
                         "params": {
                             "type": "object",
-                            "properties": {
-                                "threshold": {"type": "number"}
-                            },
+                            "properties": {"threshold": {"type": "number"}},
                         },
                     },
                 },
@@ -103,7 +101,7 @@ async def test_permission_gating_execute_commands(tmp_path: Path):
     plugin_py = plugins_dir / "psec.py"
     plugin_py.write_text(
         textwrap.dedent(
-            '''
+            """
             from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
 
             @plugin_metadata(
@@ -127,7 +125,7 @@ async def test_permission_gating_execute_commands(tmp_path: Path):
                     return True
                 async def execute(self, *args, **kwargs):
                     return "ok"
-            '''
+            """
         )
     )
     (plugins_dir / "psec_metadata.json").write_text(
@@ -168,7 +166,7 @@ async def test_tool_auto_registration(tmp_path: Path):
     plugin_py = plugins_dir / "tp.py"
     plugin_py.write_text(
         textwrap.dedent(
-            '''
+            """
             from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
             from openagent.core.base import BaseTool, ToolResult
 
@@ -202,7 +200,7 @@ async def test_tool_auto_registration(tmp_path: Path):
                     return list(self._tools)
                 async def execute(self, *args, **kwargs):
                     return "ok"
-            '''
+            """
         )
     )
     (plugins_dir / "tp_metadata.json").write_text(

@@ -90,11 +90,14 @@ class GitTool(BaseTool):
             )
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
+
     async def _run_exec(self, argv: List[str]) -> Dict[str, Any]:
         import time
+
         start = time.time()
         try:
             from openagent.utils.subprocess_utils import run_exec
+
             res = await run_exec(argv, timeout=15.0)
             out = (res.get("stdout") or "").strip()
             err = (res.get("stderr") or "").strip()
@@ -153,7 +156,9 @@ class RepoGrep(BaseTool):
         except Exception as e:
             return ToolResult(success=False, content="", error=str(e))
 
-    async def _pick_search_cmd(self, pattern: str, path: str, flags: List[str]) -> List[str]:
+    async def _pick_search_cmd(
+        self, pattern: str, path: str, flags: List[str]
+    ) -> List[str]:
         rg_check = await self._which("rg")
         if rg_check:
             # Use smart defaults, ignore binary, no colors, no pager
@@ -178,6 +183,7 @@ class RepoGrep(BaseTool):
         )
         await proc.communicate()
         return proc.returncode == 0
+
     async def _run(self, command: str) -> Dict[str, Any]:
         # Deprecated: prefer _run_exec with argv
         return await self._run_exec(command.split())

@@ -1,7 +1,7 @@
-from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from ..base import BasePlugin, PluginType, plugin_metadata, plugin_config_schema
+from ..base import BasePlugin, PluginType, plugin_config_schema, plugin_metadata
 
 
 @plugin_metadata(
@@ -11,14 +11,13 @@ from ..base import BasePlugin, PluginType, plugin_metadata, plugin_config_schema
     author="OpenAgent",
     plugin_type=PluginType.CUSTOM,
 )
-@plugin_config_schema({
-    "type": "object",
-    "properties": {
-        "enabled": {"type": "boolean"},
-        "prefix": {"type": "string"}
-    },
-    "additionalProperties": True
-})
+@plugin_config_schema(
+    {
+        "type": "object",
+        "properties": {"enabled": {"type": "boolean"}, "prefix": {"type": "string"}},
+        "additionalProperties": True,
+    }
+)
 class EchoPlugin(BasePlugin):
     @property
     def version(self) -> str:
@@ -38,4 +37,3 @@ class EchoPlugin(BasePlugin):
     async def execute(self, text: str, **kwargs) -> str:
         prefix = self.config.get("prefix", "")
         return f"{prefix}{text}"
-

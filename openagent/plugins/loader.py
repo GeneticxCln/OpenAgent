@@ -173,7 +173,9 @@ class PluginLoader:
                 elif isinstance(node, ast.Call):
                     # Detect attribute calls like os.system, subprocess.run/Popen
                     func = node.func
-                    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                    if isinstance(func, ast.Attribute) and isinstance(
+                        func.value, ast.Name
+                    ):
                         mod = func.value.id
                         name = func.attr
                         if (mod, name) in hard_block_calls:
@@ -369,7 +371,11 @@ class PluginLoader:
                 return None
 
             # Prefer classes defined in this module (avoid imported base classes)
-            local_classes = [c for c in plugin_classes if getattr(c, "__module__", None) == module.__name__]
+            local_classes = [
+                c
+                for c in plugin_classes
+                if getattr(c, "__module__", None) == module.__name__
+            ]
             candidates = local_classes or plugin_classes
 
             # If multiple classes, try to find one with matching name
@@ -380,7 +386,9 @@ class PluginLoader:
                         return cls
                 # Otherwise, prefer a class whose name is not a generic 'BasePlugin'
                 for cls in candidates:
-                    if not cls.__name__.lower().endswith("baseplugin") and cls.__name__.lower().endswith("plugin"):
+                    if not cls.__name__.lower().endswith(
+                        "baseplugin"
+                    ) and cls.__name__.lower().endswith("plugin"):
                         return cls
                 # Fallback to first local candidate
                 logger.warning(

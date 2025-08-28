@@ -1,4 +1,5 @@
 import importlib
+
 from fastapi.testclient import TestClient
 
 
@@ -17,4 +18,3 @@ def test_healthz_includes_health_summary():
     util = data.get("utilization")
     if isinstance(util, dict):
         assert "cpu" in util or "memory" in util or "disk" in util
-

@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
+
 from openagent.server.app import app
+
 
 def test_server_health_endpoints():
     with TestClient(app) as client:

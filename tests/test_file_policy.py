@@ -1,7 +1,9 @@
-import pytest
 from pathlib import Path
+
+import pytest
+
+from openagent.core.policy import CommandPolicy, configure_policy, get_policy_engine
 from openagent.tools.system import FileManager
-from openagent.core.policy import get_policy_engine, CommandPolicy, configure_policy
 
 
 @pytest.mark.asyncio
@@ -29,9 +31,18 @@ async def test_file_move_requires_approval(tmp_path):
     src.write_text("x")
 
     fm = FileManager()
-    res = await fm.execute({"operation": "move", "path": str(src), "destination": str(dst)})
+    res = await fm.execute(
+        {"operation": "move", "path": str(src), "destination": str(dst)}
+    )
     assert not res.success
     assert "requires approval" in (res.error or "").lower()
 
-    res2 = await fm.execute({"operation": "move", "path": str(src), "destination": str(dst), "confirm": True})
+    res2 = await fm.execute(
+        {
+            "operation": "move",
+            "path": str(src),
+            "destination": str(dst),
+            "confirm": True,
+        }
+    )
     assert isinstance(res2.success, bool)

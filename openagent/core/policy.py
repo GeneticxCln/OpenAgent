@@ -333,7 +333,7 @@ class PolicyEngine:
             "systemctl": (4, "service management"),
             "service": (4, "service management"),
         }
-        
+
         # Check for file operations (special handling for file:operation commands)
         file_operations = {
             "file:move": (5, "file move operation"),
@@ -344,31 +344,33 @@ class PolicyEngine:
 
         if argv:
             base_cmd = os.path.basename(argv[0])
-            
+
             # Check for file operation commands (file:operation format)
             if base_cmd.startswith("file:"):
                 # Extract operation type from command
                 operation = base_cmd.split(":", 1)[1] if ":" in base_cmd else ""
                 full_file_cmd = f"file:{operation}"
-                
+
                 if full_file_cmd in file_operations:
                     score, description = file_operations[full_file_cmd]
                     risk_score += score
                     reasons.append(f"File operation: {description}")
-                    
+
                     # Check for path-based risks in file operations
                     if len(argv) > 1:
                         file_path = argv[1]
-                        
+
                         # Check against restricted paths first (highest priority)
                         in_restricted_path = False
                         for path in self.policy.restricted_paths:
                             if file_path.startswith(path):
                                 risk_score += 8
-                                reasons.append(f"File operation on restricted path: {path}")
+                                reasons.append(
+                                    f"File operation on restricted path: {path}"
+                                )
                                 in_restricted_path = True
                                 break
-                        
+
                         # If not in restricted path, check safe paths
                         if not in_restricted_path:
                             in_safe_path = False
@@ -377,9 +379,11 @@ class PolicyEngine:
                                     in_safe_path = True
                                     # Reduce risk for operations in safe paths
                                     if operation in ["write", "copy"]:
-                                        risk_score = max(0, risk_score - 2)  # Reduce risk for safer operations
+                                        risk_score = max(
+                                            0, risk_score - 2
+                                        )  # Reduce risk for safer operations
                                     break
-                            
+
                             if not in_safe_path:
                                 risk_score += 4  # Moderate penalty for operations outside safe paths
                                 reasons.append("File operation outside safe paths")
@@ -387,7 +391,7 @@ class PolicyEngine:
                     # Unknown file operation
                     risk_score += 3
                     reasons.append(f"Unknown file operation: {operation}")
-            
+
             # Check for standard dangerous commands
             elif base_cmd in dangerous_commands:
                 score, description = dangerous_commands[base_cmd]
@@ -594,18 +598,21 @@ class PolicyEngine:
         Returns:
             Sandboxed command string
         """
+
         def _cmd_exists(prog: str) -> bool:
             try:
-                return subprocess.run(["which", prog], capture_output=True).returncode == 0
+                return (
+                    subprocess.run(["which", prog], capture_output=True).returncode == 0
+                )
             except Exception:
                 return False
 
         # Resource limits applied inside sandbox shell
         limits = [
-            "ulimit -t 30",   # CPU time limit (30 seconds)
+            "ulimit -t 30",  # CPU time limit (30 seconds)
             "ulimit -v 524288",  # Virtual memory limit (512MB)
-            "ulimit -f 10240",   # File size limit (10MB)
-            "ulimit -n 256",     # Open files limit
+            "ulimit -f 10240",  # File size limit (10MB)
+            "ulimit -n 256",  # Open files limit
         ]
         limit_block = "; ".join(limits)
 
@@ -614,13 +621,17 @@ class PolicyEngine:
         # Container backend (explicit opt-in; requires image)
         if backend == "container":
             image = self.policy.container_image or ""
-            runner = "podman" if _cmd_exists("podman") else ("docker" if _cmd_exists("docker") else None)
+            runner = (
+                "podman"
+                if _cmd_exists("podman")
+                else ("docker" if _cmd_exists("docker") else None)
+            )
             if runner and image:
                 # Mount CWD read-only if provided; run minimal sh with limits
                 mount_flag = f"-v {cwd}:{cwd}:ro" if cwd else ""
                 return (
-                    f"{runner} run --rm --network none {mount_flag} {image} sh -lc '" +
-                    f"{limit_block}; {command}'"
+                    f"{runner} run --rm --network none {mount_flag} {image} sh -lc '"
+                    + f"{limit_block}; {command}'"
                 )
             # Fall through to auto if container not usable
             backend = "auto"
@@ -640,8 +651,8 @@ class PolicyEngine:
         # unshare namespaces if available
         if backend in {"auto", "unshare"} and _cmd_exists("unshare"):
             return (
-                "unshare --user --pid --mount --net --fork sh -lc '" +
-                f"{limit_block}; {command}'"
+                "unshare --user --pid --mount --net --fork sh -lc '"
+                + f"{limit_block}; {command}'"
             )
 
         # Fallback: no isolation, only resource limits

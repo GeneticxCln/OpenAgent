@@ -46,7 +46,9 @@ def test_sse_queue_overload_returns_429(client, app_module):
     second = client.stream("POST", "/chat/stream", json={"message": "2"})
 
     # Third request should fail with 429 due to full queue
-    third = client.post("/chat/stream", json={"message": "3"}, headers={"Accept": "text/event-stream"})
+    third = client.post(
+        "/chat/stream", json={"message": "3"}, headers={"Accept": "text/event-stream"}
+    )
     try:
         assert third.status_code == 429
         body = third.json()
@@ -67,4 +69,3 @@ def test_metrics_exposes_workqueue(client, app_module):
         "openagent_workqueue_active_requests" in body
         or "workqueue_active_requests" in body
     )
-

@@ -619,9 +619,15 @@ class MetricsCollector:
                 self.net_bytes_recv_rate.set(net_recv_rate)
                 for gpu in gpus:
                     gid = str(gpu.get("gpu_id", 0))
-                    self.gpu_utilization.labels(gpu_id=gid).set(float(gpu.get("gpu_percent", 0.0)))
-                    self.gpu_memory_percent.labels(gpu_id=gid).set(float(gpu.get("memory_percent", 0.0)))
-                    self.gpu_temperature.labels(gpu_id=gid).set(float(gpu.get("temperature", 0.0)))
+                    self.gpu_utilization.labels(gpu_id=gid).set(
+                        float(gpu.get("gpu_percent", 0.0))
+                    )
+                    self.gpu_memory_percent.labels(gpu_id=gid).set(
+                        float(gpu.get("memory_percent", 0.0))
+                    )
+                    self.gpu_temperature.labels(gpu_id=gid).set(
+                        float(gpu.get("temperature", 0.0))
+                    )
             except Exception:
                 pass
         else:
@@ -632,9 +638,15 @@ class MetricsCollector:
             self._metrics_data["network_bytes_recv_rate"]["value"] = net_recv_rate
             for gpu in gpus:
                 gid = str(gpu.get("gpu_id", 0))
-                self._metrics_data[f"gpu_{gid}_utilization_percent"]["value"] = float(gpu.get("gpu_percent", 0.0))
-                self._metrics_data[f"gpu_{gid}_memory_percent"]["value"] = float(gpu.get("memory_percent", 0.0))
-                self._metrics_data[f"gpu_{gid}_temperature_celsius"]["value"] = float(gpu.get("temperature", 0.0))
+                self._metrics_data[f"gpu_{gid}_utilization_percent"]["value"] = float(
+                    gpu.get("gpu_percent", 0.0)
+                )
+                self._metrics_data[f"gpu_{gid}_memory_percent"]["value"] = float(
+                    gpu.get("memory_percent", 0.0)
+                )
+                self._metrics_data[f"gpu_{gid}_temperature_celsius"]["value"] = float(
+                    gpu.get("temperature", 0.0)
+                )
 
 
 class RequestTracker:

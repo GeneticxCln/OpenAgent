@@ -9,19 +9,23 @@ from openagent import cli as cli_mod
 class DummyAgent:
     def __init__(self):
         self._tools = {}
+
     def add_tool(self, tool):
         name = getattr(tool, "name", tool.__class__.__name__)
         self._tools[name] = tool
+
     def get_tool(self, name):
         return self._tools.get(name)
 
 
-def _write_tool_plugin(tmp_plugins: Path, name: str, version: str, tool_name: str, desc: str = ""):
+def _write_tool_plugin(
+    tmp_plugins: Path, name: str, version: str, tool_name: str, desc: str = ""
+):
     # Python file
     py = tmp_plugins / f"{name}.py"
     py.write_text(
         textwrap.dedent(
-            f'''
+            f"""
             from openagent.plugins.base import BasePlugin, PluginType, plugin_metadata
             from openagent.core.base import BaseTool, ToolResult
 
@@ -49,7 +53,7 @@ def _write_tool_plugin(tmp_plugins: Path, name: str, version: str, tool_name: st
                     return list(self._tools)
                 async def execute(self, *args, **kwargs):
                     return "ok"
-            '''
+            """
         )
     )
     # Metadata file
@@ -80,6 +84,7 @@ def test_cli_plugin_tools_shows_version_and_filter(tmp_path, monkeypatch):
 
     # Capture console output
     from rich.console import Console
+
     test_console = Console(record=True)
     monkeypatch.setattr(cli_mod, "console", test_console, raising=True)
 
@@ -120,6 +125,7 @@ def test_cli_plugin_sync_tools_filtering(tmp_path, monkeypatch):
 
     # Capture console
     from rich.console import Console
+
     test_console = Console(record=True)
     monkeypatch.setattr(cli_mod, "console", test_console, raising=True)
 
@@ -132,4 +138,3 @@ def test_cli_plugin_sync_tools_filtering(tmp_path, monkeypatch):
 
     out = test_console.export_text()
     assert "Attached" in out and "plugin tool" in out
-

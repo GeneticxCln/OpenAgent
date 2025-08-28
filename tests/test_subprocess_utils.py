@@ -1,5 +1,6 @@
 import pytest
-from openagent.utils.subprocess_utils import run_exec, SubprocessError
+
+from openagent.utils.subprocess_utils import SubprocessError, run_exec
 
 
 @pytest.mark.asyncio

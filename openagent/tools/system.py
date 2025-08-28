@@ -502,9 +502,10 @@ class CommandExecutor(BaseTool):
             if argv:
                 try:
                     from openagent.utils.subprocess_utils import run_exec
+
                     res = await run_exec(argv, timeout=30.0)
-                    out = (res.get("stdout") or "")
-                    err = (res.get("stderr") or "")
+                    out = res.get("stdout") or ""
+                    err = res.get("stderr") or ""
                     success = bool(res.get("success"))
                     exit_code = int(res.get("exit_code") or 0)
                     output = out.strip()
@@ -529,7 +530,9 @@ class CommandExecutor(BaseTool):
                     }
             else:
                 # Strict mode forbids shell fallback
-                strict = bool(self.config.get("strict", False)) or os.environ.get("OPENAGENT_EXEC_STRICT") in {"1","true","yes","on"}
+                strict = bool(self.config.get("strict", False)) or os.environ.get(
+                    "OPENAGENT_EXEC_STRICT"
+                ) in {"1", "true", "yes", "on"}
                 if strict:
                     return {
                         "success": False,
@@ -652,21 +655,48 @@ class CommandExecutor(BaseTool):
             return None
         cmd = parts[0]
         # Safe commands whitelist
-        safe_cmds = {"ls", "pwd", "cat", "echo", "which", "env", "id", "whoami", "date", "grep", "find", "ps", "df", "du", "free"}
+        safe_cmds = {
+            "ls",
+            "pwd",
+            "cat",
+            "echo",
+            "which",
+            "env",
+            "id",
+            "whoami",
+            "date",
+            "grep",
+            "find",
+            "ps",
+            "df",
+            "du",
+            "free",
+        }
         if cmd not in safe_cmds:
             return None
 
         # Per-command safe flag filtering
         def allow_flags(flags: List[str], allowed: List[str]) -> bool:
             for f in flags:
-                if f.startswith('-') and not any(f.startswith(a) for a in allowed):
+                if f.startswith("-") and not any(f.startswith(a) for a in allowed):
                     return False
             return True
 
-        flags = [p for p in parts[1:] if p.startswith('-')]
+        flags = [p for p in parts[1:] if p.startswith("-")]
         if cmd == "grep":
             # Disallow dangerous flags; allow common search flags
-            if not allow_flags(flags, ["-n", "-H", "-I", "-r", "--color=never", "--line-number", "--binary-files="]):
+            if not allow_flags(
+                flags,
+                [
+                    "-n",
+                    "-H",
+                    "-I",
+                    "-r",
+                    "--color=never",
+                    "--line-number",
+                    "--binary-files=",
+                ],
+            ):
                 return None
         elif cmd == "find":
             # Disallow -exec and -delete
@@ -723,7 +753,11 @@ class FileManager(BaseTool):
                 destination = parts[2] if len(parts) > 2 else ""
 
             result = await self._execute_file_operation(
-                operation, path, content, destination, input_data if isinstance(input_data, dict) else {}
+                operation,
+                path,
+                content,
+                destination,
+                input_data if isinstance(input_data, dict) else {},
             )
 
             return ToolResult(
@@ -737,8 +771,14 @@ class FileManager(BaseTool):
             return ToolResult(
                 success=False, content="", error=f"File operation failed: {str(e)}"
             )
+
     async def _execute_file_operation(
-        self, operation: str, path: str, content: str, destination: str, options: Dict[str, Any]
+        self,
+        operation: str,
+        path: str,
+        content: str,
+        destination: str,
+        options: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Execute specific file operations."""
         try:
@@ -750,7 +790,9 @@ class FileManager(BaseTool):
                 return await self._read_file(path_obj)
             elif operation in {"write", "copy", "move", "delete"}:
                 # Enforce policy for mutating operations
-                check = await self._enforce_file_policy(operation, path_obj, destination, options)
+                check = await self._enforce_file_policy(
+                    operation, path_obj, destination, options
+                )
                 if check is not None:
                     return check
                 if operation == "write":
@@ -777,12 +819,20 @@ class FileManager(BaseTool):
         try:
             if src.is_dir():
                 if dst.exists():
-                    return {"success": False, "content": "", "error": f"Destination exists: {dst}"}
+                    return {
+                        "success": False,
+                        "content": "",
+                        "error": f"Destination exists: {dst}",
+                    }
                 shutil.copytree(src, dst)
             else:
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
-            return {"success": True, "content": f"Copied {src} -> {dst}", "metadata": {"src": str(src), "dst": str(dst)}}
+            return {
+                "success": True,
+                "content": f"Copied {src} -> {dst}",
+                "metadata": {"src": str(src), "dst": str(dst)},
+            }
         except Exception as e:
             return {"success": False, "content": "", "error": f"Copy failed: {e}"}
 
@@ -790,7 +840,11 @@ class FileManager(BaseTool):
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
-            return {"success": True, "content": f"Moved {src} -> {dst}", "metadata": {"src": str(src), "dst": str(dst)}}
+            return {
+                "success": True,
+                "content": f"Moved {src} -> {dst}",
+                "metadata": {"src": str(src), "dst": str(dst)},
+            }
         except Exception as e:
             return {"success": False, "content": "", "error": f"Move failed: {e}"}
 
@@ -800,7 +854,11 @@ class FileManager(BaseTool):
                 shutil.rmtree(target)
             else:
                 target.unlink(missing_ok=True)
-            return {"success": True, "content": f"Deleted {target}", "metadata": {"path": str(target)}}
+            return {
+                "success": True,
+                "content": f"Deleted {target}",
+                "metadata": {"path": str(target)},
+            }
         except Exception as e:
             return {"success": False, "content": "", "error": f"Delete failed: {e}"}
 
@@ -934,6 +992,7 @@ class FileManager(BaseTool):
         Returns a result dict if denied or needs approval; otherwise None to proceed.
         """
         policy_engine = get_policy_engine()
+
         # Safe path validation
         def _in_safe(p: Path) -> bool:
             try:

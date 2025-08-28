@@ -1,3 +1,4 @@
+# flake8: noqa: E501
 """
 Command Line Interface for OpenAgent.
 
@@ -6,51 +7,55 @@ similar to how Warp provides terminal AI assistance.
 """
 
 import asyncio
-import getpass
 import json
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+# Optional dependency: httpx is only needed for server/daemon chat modes
+try:  # pragma: no cover - allow CLI to run policy commands without httpx
+    import httpx  # type: ignore
+except Exception:
+    httpx = None  # type: ignore
 import typer
 from dotenv import load_dotenv
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.spinner import Spinner
 from rich.syntax import Syntax
 from rich.table import Table
-from rich.text import Text
 
 from openagent.core.agent import Agent
-from openagent.core.config import Config
+from openagent.core.command_intelligence import (
+    CompletionContext,
+    SuggestionType,
+    create_command_completion_engine,
+)
+from openagent.core.command_templates import create_command_templates
+from openagent.core.context_v2.project_analyzer import ProjectContextEngine
 from openagent.core.history import HistoryManager
-from openagent.core.llm import ModelConfig, get_llm
+from openagent.core.llm import ModelConfig
 from openagent.core.performance.optimization import (
-    get_memory_optimizer,
-    get_model_cache,
     get_performance_profiler,
-    get_startup_optimizer,
     optimize_openagent_performance,
 )
 from openagent.core.redact import redact_text
-from openagent.core.workflows import Workflow, WorkflowManager
+from openagent.core.workflows import WorkflowManager
+from openagent.terminal.integration import (
+    create_completion_context as term_create_completion_context,
+)
 from openagent.terminal.integration import install_snippet
 from openagent.terminal.validator import (
-    CONFIG_PATH,
-    DEFAULT_POLICY,
     load_policy,
     save_policy,
 )
 from openagent.terminal.validator import validate as validate_cmd
 from openagent.tools.git import GitTool, RepoGrep
-from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 from openagent.tools.patch import PatchEditor
+from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
 from openagent.ui import create_terminal_renderer
 
 # Initialize Rich console
@@ -59,6 +64,9 @@ app = typer.Typer(help="OpenAgent - AI-powered terminal assistant")
 
 # Global agent instance
 agent: Optional[Agent] = None
+
+# Small cache for the command completion engine (per-process)
+_COMPLETION_ENGINE_CACHE = None
 
 FIRST_RUN_FLAG = Path.home() / ".config" / "openagent" / "first_run.json"
 GLOBAL_KEYS_ENV = Path.home() / ".config" / "openagent" / "keys.env"
@@ -132,6 +140,73 @@ def setup_logging(debug: bool = False):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[logging.StreamHandler(sys.stderr)],
     )
+
+
+# ---------- Helpers for command intelligence and context ----------
+async def _get_completion_engine():
+    """Get (and cache) the command completion engine."""
+    global _COMPLETION_ENGINE_CACHE
+    try:
+        if _COMPLETION_ENGINE_CACHE is not None:
+            return _COMPLETION_ENGINE_CACHE
+        engine = await create_command_completion_engine()
+        _COMPLETION_ENGINE_CACHE = engine
+        return engine
+    except Exception:
+        return None
+
+
+async def _build_completion_context() -> Optional[CompletionContext]:
+    """Build a completion context while redacting environment variable values.
+
+    Only environment variable names are exposed; values are replaced with 'REDACTED'.
+    """
+    try:
+        # Try terminal integration helper first (sync)
+        ctx = term_create_completion_context()
+        if ctx:
+            # If external helper returns env vars, redact them defensively
+            try:
+                if getattr(ctx, "environment_vars", None):
+                    ctx.environment_vars = {
+                        k: "REDACTED" for k in ctx.environment_vars.keys()
+                    }
+            except Exception:
+                pass
+            return ctx
+    except Exception:
+        pass
+    # Build a minimal context using ProjectContextEngine for better suggestions
+    try:
+        engine = ProjectContextEngine()
+        workspace = await engine.analyze_workspace(Path.cwd())
+        redacted_env = {k: "REDACTED" for k in os.environ.keys()}
+        return CompletionContext(
+            current_directory=Path.cwd(),
+            project_type=getattr(workspace, "project_type", None),
+            git_repo=getattr(getattr(workspace, "git_context", None), "is_repo", False),
+            git_branch=getattr(
+                getattr(workspace, "git_context", None), "current_branch", None
+            ),
+            recent_commands=[],
+            environment_vars=redacted_env,
+        )
+    except Exception:
+        try:
+            redacted_env = {k: "REDACTED" for k in os.environ.keys()}
+            return CompletionContext(
+                current_directory=Path.cwd(),
+                project_type=None,
+                git_repo=False,
+                git_branch=None,
+                recent_commands=[],
+                environment_vars=redacted_env,
+            )
+        except Exception:
+            return None
+
+
+# ------------------------------------------------------------------
 
 
 def create_agent(
@@ -541,7 +616,10 @@ def chat(
                 await pm_for_tools.discover_plugins()
                 await pm_for_tools.load_all_plugins()
                 # Enable plugins that are configured enabled
-                for name, info in [(md.get("metadata", {}).get("name"), md) for md in await pm_for_tools.list_plugins()]:
+                for name, info in [
+                    (md.get("metadata", {}).get("name"), md)
+                    for md in await pm_for_tools.list_plugins()
+                ]:
                     if not name:
                         continue
                     try:
@@ -610,7 +688,12 @@ async def chat_loop(
             user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
 
             # If using block UI, interpret single-key shortcuts at the prompt (press key and Enter)
-            if use_blocks and renderer and user_input in {"o","j","k","l","s","r","/","n","p","e","t","g"}:
+            if (
+                use_blocks
+                and renderer
+                and user_input
+                in {"o", "j", "k", "l", "s", "r", "/", "n", "p", "e", "t", "g"}
+            ):
                 try:
                     renderer.handle_keypress(user_input)
                 except Exception:
@@ -639,14 +722,14 @@ async def chat_loop(
                         if use_blocks and renderer:
                             current_block = renderer.add_ai_response("")
                         else:
-                            console.print(f"\n[bold green]Assistant:[/bold green]")
+                            console.print("\n[bold green]Assistant:[/bold green]")
                         try:
                             # Prefer an already-injected websockets module (for testing); else import
                             ws_mod = globals().get("websockets")
                             if ws_mod is None:
                                 try:
                                     import websockets as ws_mod  # type: ignore
-                                except Exception as _e:
+                                except Exception:
                                     raise RuntimeError(
                                         "websockets package not installed. Install with: pip install websockets"
                                     )
@@ -679,12 +762,16 @@ async def chat_loop(
                                         chunk = redact_text(str(data["content"]))
                                         if use_blocks and renderer and current_block:
                                             accum += chunk
-                                            renderer.update_block_output(current_block, accum)
+                                            renderer.update_block_output(
+                                                current_block, accum
+                                            )
                                         else:
                                             console.print(chunk, end="")
                                     if data.get("event") == "end":
                                         if use_blocks and renderer and current_block:
-                                            renderer.complete_block_execution(current_block, exit_code=0)
+                                            renderer.complete_block_execution(
+                                                current_block, exit_code=0
+                                            )
                                         else:
                                             console.print()
                                         break
@@ -709,7 +796,9 @@ async def chat_loop(
                                     if use_blocks and renderer:
                                         current_block = renderer.add_ai_response("")
                                     else:
-                                        console.print(f"\n[bold green]Assistant:[/bold green]")
+                                        console.print(
+                                            "\n[bold green]Assistant:[/bold green]"
+                                        )
                                     async with client.stream(
                                         "POST",
                                         f"{api_url}/chat/stream",
@@ -718,7 +807,9 @@ async def chat_loop(
                                     ) as resp:
                                         if resp.status_code != 200:
                                             text = await resp.aread()
-                                            error_msg = text.decode(errors='ignore')[:200]
+                                            error_msg = text.decode(errors="ignore")[
+                                                :200
+                                            ]
                                             # Redact any potential secrets in error message
                                             error_msg = redact_text(error_msg)
                                             raise RuntimeError(
@@ -734,16 +825,28 @@ async def chat_loop(
                                                     if chunk:
                                                         # Apply redaction to chunk content
                                                         chunk = redact_text(str(chunk))
-                                                        if use_blocks and renderer and current_block:
+                                                        if (
+                                                            use_blocks
+                                                            and renderer
+                                                            and current_block
+                                                        ):
                                                             accum += chunk
-                                                            renderer.update_block_output(current_block, accum)
+                                                            renderer.update_block_output(
+                                                                current_block, accum
+                                                            )
                                                         else:
                                                             console.print(chunk, end="")
                                                 except Exception:
                                                     pass
                                             elif line.startswith("event: end"):
-                                                if use_blocks and renderer and current_block:
-                                                    renderer.complete_block_execution(current_block, exit_code=0)
+                                                if (
+                                                    use_blocks
+                                                    and renderer
+                                                    and current_block
+                                                ):
+                                                    renderer.complete_block_execution(
+                                                        current_block, exit_code=0
+                                                    )
                                                 else:
                                                     console.print()
 
@@ -759,10 +862,14 @@ async def chat_loop(
                                 except Exception as e2:
                                     # Hardened error handling with block UI and redaction
                                     error_msg = f"Error streaming: WS failed ({redact_text(str(e))}); SSE failed ({redact_text(str(e2))})"
-                                    
+
                                     if use_blocks and renderer:
-                                        error_block = renderer.add_ai_response(error_msg)
-                                        renderer.complete_block_execution(error_block, exit_code=1)
+                                        error_block = renderer.add_ai_response(
+                                            error_msg
+                                        )
+                                        renderer.complete_block_execution(
+                                            error_block, exit_code=1
+                                        )
                                     else:
                                         console.print(f"\n[red]{error_msg}[/red]")
 
@@ -771,7 +878,10 @@ async def chat_loop(
 
                                     response = R()
                                     response.content = error_msg
-                                    response.metadata = {"error": True, "fallback_failed": True}
+                                    response.metadata = {
+                                        "error": True,
+                                        "fallback_failed": True,
+                                    }
                     elif stream:
                         # SSE streaming (primary)
                         current_block = None
@@ -779,7 +889,7 @@ async def chat_loop(
                         if use_blocks and renderer:
                             current_block = renderer.add_ai_response("")
                         else:
-                            console.print(f"\n[bold green]Assistant:[/bold green]")
+                            console.print("\n[bold green]Assistant:[/bold green]")
                         async with httpx.AsyncClient(timeout=None) as client:
                             try:
                                 headers = _build_http_headers(
@@ -805,16 +915,28 @@ async def chat_loop(
                                                 chunk = data.get("content")
                                                 if chunk:
                                                     chunk = redact_text(str(chunk))
-                                                    if use_blocks and renderer and current_block:
+                                                    if (
+                                                        use_blocks
+                                                        and renderer
+                                                        and current_block
+                                                    ):
                                                         accum += chunk
-                                                        renderer.update_block_output(current_block, accum)
+                                                        renderer.update_block_output(
+                                                            current_block, accum
+                                                        )
                                                     else:
                                                         console.print(chunk, end="")
                                             except Exception:
                                                 pass
                                         elif line.startswith("event: end"):
-                                            if use_blocks and renderer and current_block:
-                                                renderer.complete_block_execution(current_block, exit_code=0)
+                                            if (
+                                                use_blocks
+                                                and renderer
+                                                and current_block
+                                            ):
+                                                renderer.complete_block_execution(
+                                                    current_block, exit_code=0
+                                                )
                                             else:
                                                 console.print()
 
@@ -894,7 +1016,7 @@ async def chat_loop(
                 if use_blocks and renderer:
                     renderer.add_ai_response(redact_text(response.content or ""))
                 else:
-                    console.print(f"\n[bold green]Assistant:[/bold green]")
+                    console.print("\n[bold green]Assistant:[/bold green]")
                     out = redact_text(response.content or "")
                     if "```" in out:
                         console.print(Markdown(out))
@@ -1464,92 +1586,6 @@ def validate(
 
 
 @app.command()
-def policy(
-    action: str = typer.Argument(
-        ...,
-        help="Action: show|reset|set-default|add-allow|remove-allow|block-risky|unblock-risky|strict|relaxed",
-    ),
-    key: str = typer.Argument(
-        None, help="Command for allowlist updates or default value"
-    ),
-    value: str = typer.Argument(
-        None, help="Value for the action (flag prefix or default decision)"
-    ),
-):
-    """Manage OpenAgent terminal policy stored in ~/.config/openagent/policy.yaml."""
-    p = load_policy()
-    if action == "show":
-        import json
-
-        console.print(Panel(str(CONFIG_PATH), title="Policy File"))
-        console.print_json(data=p)
-        return
-    if action == "reset":
-        save_policy(DEFAULT_POLICY.copy())
-        console.print("[green]Policy reset to defaults[/green]")
-        return
-    if action == "set-default":
-        # Accept the decision as either the second or third positional argument
-        decision = value or key
-        if decision not in {"allow", "warn", "block"}:
-            console.print("[red]Default must be one of allow|warn|block[/red]")
-            raise typer.Exit(1)
-        p["default_decision"] = decision
-        save_policy(p)
-        console.print(f"[green]Default decision set to {decision}[/green]")
-        return
-    if action == "add-allow":
-        if not key or not value:
-            console.print("[red]Usage: policy add-allow <command> <flag_prefix>[/red]")
-            raise typer.Exit(1)
-        p.setdefault("allowlist", {}).setdefault(key, []).append(value)
-        save_policy(p)
-        console.print(f"[green]Added allow flag '{value}' for command '{key}'[/green]")
-        return
-    if action == "remove-allow":
-        if not key or not value:
-            console.print(
-                "[red]Usage: policy remove-allow <command> <flag_prefix>[/red]"
-            )
-            raise typer.Exit(1)
-        flags = p.setdefault("allowlist", {}).setdefault(key, [])
-        if value in flags:
-            flags.remove(value)
-        save_policy(p)
-        console.print(
-            f"[green]Removed allow flag '{value}' for command '{key}'[/green]"
-        )
-        return
-    if action == "block-risky":
-        p["block_risky"] = True
-        save_policy(p)
-        console.print("[green]Risky commands will be blocked[/green]")
-        return
-    if action == "unblock-risky":
-        p["block_risky"] = False
-        save_policy(p)
-        console.print("[green]Risky commands will not be blocked (may still warn)")
-        return
-    if action == "strict":
-        p["default_decision"] = "block"
-        p["block_risky"] = True
-        save_policy(p)
-        console.print(
-            "[green]Policy set to STRICT (block-by-default, risky blocked).[/green]"
-        )
-        return
-    if action == "relaxed":
-        p["default_decision"] = "warn"
-        p["block_risky"] = True
-        save_policy(p)
-        console.print(
-            "[green]Policy set to RELAXED (warn-by-default, risky blocked).[/green]"
-        )
-        return
-    console.print("[red]Unknown action[/red]")
-
-
-@app.command()
 def completion(
     shell: str = typer.Argument("zsh", help="Shell: zsh|bash"),
     install: bool = typer.Option(
@@ -1567,7 +1603,7 @@ _arguments '*: :->cmds'
 case $state in
   cmds)
     local -a subcmds
-    subcmds=(chat run blocks workflow fix exec do models doctor setup integrate serve policy validate completion)
+    subcmds=(chat run blocks workflow fix exec do models doctor setup integrate serve policy validate completion complete suggest suggest-context templates correct context-info)
     _describe 'command' subcmds
     ;;
 esac
@@ -1589,7 +1625,7 @@ esac
 _openagent_completions()
 {
     COMPREPLY=()
-    local cmds="chat run blocks workflow fix exec do models doctor setup integrate serve policy validate completion"
+    local cmds="chat run blocks workflow fix exec do models doctor setup integrate serve policy validate completion complete suggest suggest-context templates correct context-info"
     COMPREPLY=( $(compgen -W "$cmds" -- ${COMP_WORDS[1]}) )
 }
 complete -F _openagent_completions openagent
@@ -2029,6 +2065,146 @@ def policy_set_default(
     console.print(f"[green]Default decision set to {decision}[/green]")
 
 
+@policy_app.command("add-allow")
+def policy_add_allow(
+    command: str = typer.Argument(..., help="Command to allow flags for"),
+    flag_prefix: str = typer.Argument(..., help="Flag prefix to allow (e.g., --safe-)"),
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Add an allowed flag prefix for a command (legacy validator allowlist)."""
+    p = load_policy()
+    p.setdefault("allowlist", {}).setdefault(command, []).append(flag_prefix)
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "add-allow",
+                "command": command,
+                "flag_prefix": flag_prefix,
+            }
+        )
+    else:
+        console.print(
+            f"[green]Added allow flag '{flag_prefix}' for command '{command}'[/green]"
+        )
+
+
+@policy_app.command("remove-allow")
+def policy_remove_allow(
+    command: str = typer.Argument(..., help="Command to remove flag from"),
+    flag_prefix: str = typer.Argument(..., help="Flag prefix to remove"),
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Remove an allowed flag prefix for a command (legacy validator allowlist)."""
+    p = load_policy()
+    flags = p.setdefault("allowlist", {}).setdefault(command, [])
+    if flag_prefix in flags:
+        flags.remove(flag_prefix)
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "remove-allow",
+                "command": command,
+                "flag_prefix": flag_prefix,
+            }
+        )
+    else:
+        console.print(
+            f"[green]Removed allow flag '{flag_prefix}' for command '{command}'[/green]"
+        )
+
+
+@policy_app.command("block-risky")
+def policy_block_risky(
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Block risky commands in the legacy validator policy."""
+    p = load_policy()
+    p["block_risky"] = True
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "block-risky",
+                "block_risky": True,
+            }
+        )
+    else:
+        console.print("[green]Risky commands will be blocked[/green]")
+
+
+@policy_app.command("unblock-risky")
+def policy_unblock_risky(
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Do not block risky commands (may still warn) in the legacy validator policy."""
+    p = load_policy()
+    p["block_risky"] = False
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "unblock-risky",
+                "block_risky": False,
+            }
+        )
+    else:
+        console.print("[green]Risky commands will not be blocked (may still warn)")
+
+
+@policy_app.command("strict")
+def policy_strict(
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Set legacy validator policy to STRICT (block-by-default, block risky)."""
+    p = load_policy()
+    p["default_decision"] = "block"
+    p["block_risky"] = True
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "strict",
+                "default_decision": "block",
+                "block_risky": True,
+            }
+        )
+    else:
+        console.print(
+            "[green]Policy set to STRICT (block-by-default, risky blocked).[/green]"
+        )
+
+
+@policy_app.command("relaxed")
+def policy_relaxed(
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+):
+    """Set legacy validator policy to RELAXED (warn-by-default, block risky)."""
+    p = load_policy()
+    p["default_decision"] = "warn"
+    p["block_risky"] = True
+    save_policy(p)
+    if json_out:
+        console.print_json(
+            {
+                "status": "ok",
+                "action": "relaxed",
+                "default_decision": "warn",
+                "block_risky": True,
+            }
+        )
+    else:
+        console.print(
+            "[green]Policy set to RELAXED (warn-by-default, risky blocked).[/green]"
+        )
+
+
 @policy_app.command("audit")
 def policy_audit(
     action: str = typer.Argument(..., help="Action: list, verify, export"),
@@ -2154,6 +2330,7 @@ def plugin_list(
 ):
     """List all discovered plugins and their status."""
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
 
     async def run():
@@ -2177,8 +2354,15 @@ def plugin_list(
         for info in infos:
             md = info.get("metadata") or {}
             status = info.get("status", "unknown")
-            status_emoji = "🟢" if status == "active" else ("🟡" if status == "loaded" else "⚪")
-            table.add_row(md.get("name", "?"), md.get("version", "?"), md.get("description", ""), f"{status_emoji} {status}")
+            status_emoji = (
+                "🟢" if status == "active" else ("🟡" if status == "loaded" else "⚪")
+            )
+            table.add_row(
+                md.get("name", "?"),
+                md.get("version", "?"),
+                md.get("description", ""),
+                f"{status_emoji} {status}",
+            )
         console.print(table)
 
     asyncio.run(run())
@@ -2187,7 +2371,9 @@ def plugin_list(
 @plugin_app.command("enable")
 def plugin_enable(plugin_name: str = typer.Argument(..., help="Plugin to enable")):
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
+
     async def run():
         await pm.initialize()
         await pm.load_plugin(plugin_name)
@@ -2195,30 +2381,41 @@ def plugin_enable(plugin_name: str = typer.Argument(..., help="Plugin to enable"
         if ok:
             await pm.save_plugin_configs()
         console.print("[green]Enabled[/green]" if ok else "[red]Failed to enable[/red]")
+
     asyncio.run(run())
 
 
 @plugin_app.command("disable")
 def plugin_disable(plugin_name: str = typer.Argument(..., help="Plugin to disable")):
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
+
     async def run():
         await pm.initialize()
         ok = await pm.disable_plugin(plugin_name)
         if ok:
             await pm.save_plugin_configs()
-        console.print("[yellow]Disabled[/yellow]" if ok else "[red]Failed to disable[/red]")
+        console.print(
+            "[yellow]Disabled[/yellow]" if ok else "[red]Failed to disable[/red]"
+        )
+
     asyncio.run(run())
 
 
 @plugin_app.command("reload")
 def plugin_reload(plugin_name: str = typer.Argument(..., help="Plugin to reload")):
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
+
     async def run():
         await pm.initialize()
         ok = await pm.reload_plugin(plugin_name)
-        console.print("[green]Reloaded[/green]" if ok else "[red]Failed to reload[/red]")
+        console.print(
+            "[green]Reloaded[/green]" if ok else "[red]Failed to reload[/red]"
+        )
+
     asyncio.run(run())
 
 
@@ -2228,6 +2425,7 @@ def plugin_tools(
 ):
     """List tools provided by enabled plugins."""
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
 
     async def run():
@@ -2244,9 +2442,7 @@ def plugin_tools(
             except Exception:
                 pass
         # Enriched entries with version
-        entries = pm.get_tool_entries(
-            plugins={plugin} if plugin else None
-        )
+        entries = pm.get_tool_entries(plugins={plugin} if plugin else None)
         table = Table(show_header=True, header_style="bold")
         table.add_column("Plugin", style="cyan")
         table.add_column("Version", style="magenta")
@@ -2260,7 +2456,9 @@ def plugin_tools(
             tool = e["tool"]
             desc = getattr(tool, "description", "")
             source = tool.__class__.__module__
-            table.add_row(e["plugin"], str(e["version"] or "-"), e["tool_name"], source, desc)
+            table.add_row(
+                e["plugin"], str(e["version"] or "-"), e["tool_name"], source, desc
+            )
         console.print(table)
 
     asyncio.run(run())
@@ -2275,11 +2473,13 @@ def plugin_sync_tools(
     )
 ):
     """Attach enabled plugin tools to the current process agent if available."""
-    global agent
     if agent is None:
-        console.print("[yellow]No running agent in this process. Start chat first (openagent chat).[/yellow]")
+        console.print(
+            "[yellow]No running agent in this process. Start chat first (openagent chat).[/yellow]"
+        )
         return
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
 
     async def run():
@@ -2297,14 +2497,17 @@ def plugin_sync_tools(
                 await pm.enable_plugin(name)
             except Exception:
                 pass
-        added = pm.register_tools_with_agent(agent, plugins=set(plugin) if plugin else None)
-        console.print(f"[green]Attached {added} plugin tool(s) to the running agent.[/green]")
+        added = pm.register_tools_with_agent(
+            agent, plugins=set(plugin) if plugin else None
+        )
+        console.print(
+            f"[green]Attached {added} plugin tool(s) to the running agent.[/green]"
+        )
 
     asyncio.run(run())
 
 
 @plugin_app.command("install")
-
 def plugin_install(
     source: str = typer.Argument(..., help="Plugin source (path, git repo, or name)"),
     force: bool = typer.Option(False, help="Force reinstall if already exists"),
@@ -2675,6 +2878,7 @@ def ui_demo(
 
                 # Keep demo running for interactive use
                 import time
+
                 start_time = time.time()
                 while time.time() - start_time < duration:
                     await asyncio.sleep(1)
@@ -2726,6 +2930,7 @@ def plugin_info(
 ):
     """Show detailed information about a plugin."""
     from openagent.plugins.manager import PluginManager
+
     pm = PluginManager()
 
     async def run():
@@ -2741,15 +2946,266 @@ def plugin_info(
             console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
             return
         md = info.get("metadata") or {}
-        console.print(f"\n[bold cyan]{md.get('name','?')}[/bold cyan] v{md.get('version','?')}")
+        console.print(
+            f"\n[bold cyan]{md.get('name','?')}[/bold cyan] v{md.get('version','?')}"
+        )
         console.print(f"📝 {md.get('description','')}")
-        if md.get('author'):
+        if md.get("author"):
             console.print(f"👤 Author: {md.get('author')}")
-        if md.get('keywords'):
+        if md.get("keywords"):
             console.print(f"🏷️  Tags: {', '.join(md.get('keywords'))}")
         console.print(f"Status: {info.get('status')}")
 
     asyncio.run(run())
+
+
+# ----------------------- Intelligence Endpoints -----------------------
+
+
+@app.command("complete")
+def complete_cli(
+    partial: str = typer.Argument(..., help="Partial command to complete"),
+    max: int = typer.Option(10, "--max", help="Maximum suggestions to return"),
+    unique: bool = typer.Option(True, help="Deduplicate suggestions"),
+):
+    """Return command completion suggestions (one per line)."""
+
+    async def run():
+        engine = await _get_completion_engine()
+        if not engine:
+            return
+        ctx = await _build_completion_context()
+        if not ctx:
+            return
+        try:
+            suggestions = await engine.suggest_commands(partial, ctx, max)
+        except Exception:
+            suggestions = []
+        seen = set()
+        for s in suggestions:
+            text = (s.text or "").strip()
+            if not text:
+                continue
+            if unique and text in seen:
+                continue
+            seen.add(text)
+            print(text)
+
+    asyncio.run(run())
+
+
+@app.command("suggest")
+def suggest_cli(
+    partial: str = typer.Argument(
+        "", help="Partial command for intelligent suggestions"
+    ),
+    max: int = typer.Option(10, "--max", help="Maximum suggestions"),
+):
+    """Return intelligent suggestions (corrections/history/context). One per line."""
+
+    async def run():
+        engine = await _get_completion_engine()
+        if not engine:
+            return
+        ctx = await _build_completion_context()
+        if not ctx:
+            return
+        try:
+            suggestions = await engine.suggest_commands(partial, ctx, max)
+        except Exception:
+            suggestions = []
+        seen = set()
+        for s in suggestions:
+            text = (s.text or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                print(text)
+
+    asyncio.run(run())
+
+
+@app.command("suggest-context")
+def suggest_context_cli(
+    max: int = typer.Option(10, "--max", help="Maximum suggestions"),
+):
+    """Suggest context-based commands (git/project-aware). One per line."""
+
+    async def run():
+        engine = await _get_completion_engine()
+        if not engine:
+            return
+        ctx = await _build_completion_context()
+        if not ctx:
+            return
+        try:
+            suggestions = await engine.suggest_commands("", ctx, max)
+        except Exception:
+            suggestions = []
+        seen = set()
+        for s in suggestions:
+            # Prefer context suggestions; if engine returns mixed, filter by type
+            try:
+                s_type = getattr(s, "type", None)
+            except Exception:
+                s_type = None
+            if s_type and s_type != SuggestionType.CONTEXT:
+                continue
+            text = (s.text or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                print(text)
+
+    asyncio.run(run())
+
+
+@app.command("correct")
+def correct_cli(command: str = typer.Argument(..., help="Command to auto-correct")):
+    """Return an auto-corrected command if a known typo/alias is detected."""
+
+    async def run():
+        engine = await _get_completion_engine()
+        if not engine:
+            return
+        try:
+            corrected = engine.auto_correct_command(command)
+        except Exception:
+            corrected = None
+        print(corrected or command)
+
+    asyncio.run(run())
+
+
+@app.command("templates")
+def templates_cli(
+    suggest: bool = typer.Option(
+        False, "--suggest", help="Suggest templates for current context"
+    ),
+    current_dir: Optional[str] = typer.Option(
+        None, "--current-dir", help="Directory to analyze (defaults to cwd)"
+    ),
+    output: str = typer.Option("lines", "--output", help="Output format: lines|json"),
+    limit: int = typer.Option(
+        10, "--limit", help="Max suggestions when using --suggest"
+    ),
+):
+    """List or suggest command templates for the current project context."""
+
+    async def run():
+        # Build workspace context
+        try:
+            pce = ProjectContextEngine()
+            path = Path(current_dir).resolve() if current_dir else Path.cwd()
+            workspace = await pce.analyze_workspace(path)
+        except Exception:
+            workspace = None
+        tmpls = create_command_templates()
+        if suggest:
+            try:
+                suggestions = tmpls.suggest_templates(workspace or None)[:limit]
+            except Exception:
+                suggestions = []
+            if output == "json":
+                import json as _json
+
+                payload = [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "category": t.category.value,
+                        "estimated_time": t.estimated_time,
+                        "danger_level": t.danger_level,
+                        "tags": t.tags,
+                    }
+                    for t in suggestions
+                ]
+                print(_json.dumps(payload))
+            else:
+                for t in suggestions:
+                    print(t.name)
+        else:
+            # List all known built-in templates by name
+            try:
+                all_list = tmpls.list_templates()
+            except Exception:
+                all_list = []
+            if output == "json":
+                import json as _json
+
+                payload = [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "category": t.category.value,
+                        "estimated_time": t.estimated_time,
+                        "danger_level": t.danger_level,
+                        "tags": t.tags,
+                    }
+                    for t in all_list
+                ]
+                print(_json.dumps(payload))
+            else:
+                for t in all_list:
+                    print(t.name)
+
+    asyncio.run(run())
+
+
+@app.command("context-info")
+def context_info_cli(
+    brief: bool = typer.Option(False, "--brief", help="Print a brief one-line summary"),
+    json_out: bool = typer.Option(False, "--json", help="Output JSON"),
+    current_dir: Optional[str] = typer.Option(
+        None, "--current-dir", help="Directory to analyze (defaults to cwd)"
+    ),
+):
+    """Show detected project context (project type, git branch, etc.)."""
+
+    async def run():
+        try:
+            pce = ProjectContextEngine()
+            path = Path(current_dir).resolve() if current_dir else Path.cwd()
+            ws = await pce.analyze_workspace(path)
+        except Exception:
+            ws = None
+        # Build summary
+        proj_type = getattr(ws, "project_type", None)
+        proj_type_val = (
+            proj_type.value
+            if getattr(proj_type, "value", None)
+            else str(proj_type) if proj_type else "unknown"
+        )
+        git = getattr(ws, "git_context", None)
+        is_repo = getattr(git, "is_repo", False)
+        branch = getattr(git, "current_branch", None)
+        project_name = getattr(ws, "project_name", Path.cwd().name)
+        if json_out:
+            import json as _json
+
+            payload = {
+                "project_name": project_name,
+                "project_type": proj_type_val,
+                "git_repo": bool(is_repo),
+                "git_branch": branch,
+            }
+            print(_json.dumps(payload))
+        else:
+            if brief:
+                parts = [f"{project_name}", proj_type_val]
+                if is_repo:
+                    parts.append(f"git:{branch or '-'}")
+                print(" | ".join(parts))
+            else:
+                console.print(
+                    Panel(
+                        f"Project: {project_name}\nType: {proj_type_val}\nGit: {'yes' if is_repo else 'no'}{(' (' + branch + ')') if branch else ''}",
+                        title="Context",
+                    )
+                )
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------
 
 
 def main():
