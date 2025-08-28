@@ -141,8 +141,8 @@ def create_agent(
 ) -> Agent:
     """Create and configure an OpenAgent instance.
 
-    Note: By default, command execution is ENABLED (unsafe_exec=True), similar to Warp.
-    Use --safe-exec flags in commands to force explain-only behavior.
+    Note: By default, OpenAgent is safe and explain-only (unsafe_exec=False).
+    Pass --unsafe-exec to allow actual command execution when you intend to run commands.
     """
 
     # LLM configuration for efficient operation
@@ -340,6 +340,11 @@ def chat(
     ws_token_query_key: Optional[str] = typer.Option(
         None,
         help="If set, also include the token as a query parameter with this key on the WebSocket URL.",
+    ),
+    no_ui_blocks: bool = typer.Option(
+        False,
+        "--no-ui-blocks",
+        help="Disable block UI and print raw text to console",
     ),
 ):
     """Start an interactive chat session with OpenAgent."""
@@ -562,6 +567,7 @@ def chat(
             auth_header_value=auth_header_value,
             api_token=resolved_token,
             ws_token_query_key=ws_token_query_key,
+            use_blocks=(not no_ui_blocks),
         )
     )
 
@@ -576,11 +582,25 @@ async def chat_loop(
     auth_header_value: Optional[str] = None,
     api_token: Optional[str] = None,
     ws_token_query_key: Optional[str] = None,
+    use_blocks: bool = True,
 ):
-    """Main interactive chat loop."""
+    """Main interactive chat loop.
 
-    console.print("\\n[green]Ready! Type your message or 'help' for commands.[/green]")
-    console.print("[dim]Special commands: /help, /status, /reset, /quit[/dim]\\n")
+    When use_blocks=True, responses are rendered via the block UI with folding and status.
+    """
+
+    console.print("\n[green]Ready! Type your message or 'help' for commands.[/green]")
+    console.print("[dim]Special commands: /help, /status, /reset, /quit[/dim]\n")
+
+    # Initialize block UI if requested
+    renderer = None
+    if use_blocks:
+        try:
+            renderer = create_terminal_renderer()
+            renderer.start_live_display()
+        except Exception:
+            renderer = None
+            use_blocks = False
 
     while True:
         try:
@@ -603,7 +623,13 @@ async def chat_loop(
                     # Prefer WebSocket streaming if requested; fallback to SSE or non-streaming
                     payload = {"message": user_input}
                     if stream and ws:
-                        console.print(f"\n[bold green]Assistant:[/bold green]")
+                        # WebSocket streaming
+                        current_block = None
+                        accum = ""
+                        if use_blocks and renderer:
+                            current_block = renderer.add_ai_response("")
+                        else:
+                            console.print(f"\n[bold green]Assistant:[/bold green]")
                         try:
                             # Prefer an already-injected websockets module (for testing); else import
                             ws_mod = globals().get("websockets")
@@ -640,9 +666,17 @@ async def chat_loop(
                                         continue
                                     # Expect {'content': '...', 'event': 'chunk'|'end' }
                                     if data.get("content"):
-                                        console.print(data["content"], end="")
+                                        chunk = redact_text(str(data["content"]))
+                                        if use_blocks and renderer and current_block:
+                                            accum += chunk
+                                            renderer.update_block_output(current_block, accum)
+                                        else:
+                                            console.print(chunk, end="")
                                     if data.get("event") == "end":
-                                        console.print()
+                                        if use_blocks and renderer and current_block:
+                                            renderer.complete_block_execution(current_block, exit_code=0)
+                                        else:
+                                            console.print()
                                         break
 
                             class R:
@@ -659,6 +693,13 @@ async def chat_loop(
                                         accept_sse=True,
                                         auth_header_value=auth_header_value,
                                     )
+                                    # SSE fallback streaming
+                                    current_block = None
+                                    accum = ""
+                                    if use_blocks and renderer:
+                                        current_block = renderer.add_ai_response("")
+                                    else:
+                                        console.print(f"\n[bold green]Assistant:[/bold green]")
                                     async with client.stream(
                                         "POST",
                                         f"{api_url}/chat/stream",
@@ -702,8 +743,13 @@ async def chat_loop(
                                     response.content = f"Error streaming: WS failed ({e}); SSE failed ({e2})"
                                     response.metadata = {}
                     elif stream:
-                        # SSE streaming
-                        console.print(f"\n[bold green]Assistant:[/bold green]")
+                        # SSE streaming (primary)
+                        current_block = None
+                        accum = ""
+                        if use_blocks and renderer:
+                            current_block = renderer.add_ai_response("")
+                        else:
+                            console.print(f"\n[bold green]Assistant:[/bold green]")
                         async with httpx.AsyncClient(timeout=None) as client:
                             try:
                                 headers = _build_http_headers(
@@ -728,11 +774,19 @@ async def chat_loop(
                                                 data = json.loads(line[6:].strip())
                                                 chunk = data.get("content")
                                                 if chunk:
-                                                    console.print(chunk, end="")
+                                                    chunk = redact_text(str(chunk))
+                                                    if use_blocks and renderer and current_block:
+                                                        accum += chunk
+                                                        renderer.update_block_output(current_block, accum)
+                                                    else:
+                                                        console.print(chunk, end="")
                                             except Exception:
                                                 pass
                                         elif line.startswith("event: end"):
-                                            console.print()
+                                            if use_blocks and renderer and current_block:
+                                                renderer.complete_block_execution(current_block, exit_code=0)
+                                            else:
+                                                console.print()
 
                                 class R:
                                     pass
@@ -807,11 +861,15 @@ async def chat_loop(
                 or not stream
                 or (getattr(response, "content", None) and response.content)
             ):
-                console.print(f"\n[bold green]Assistant:[/bold green]")
-                if "```" in response.content:
-                    console.print(Markdown(response.content))
+                if use_blocks and renderer:
+                    renderer.add_ai_response(redact_text(response.content or ""))
                 else:
-                    console.print(response.content)
+                    console.print(f"\n[bold green]Assistant:[/bold green]")
+                    out = redact_text(response.content or "")
+                    if "```" in out:
+                        console.print(Markdown(out))
+                    else:
+                        console.print(out)
 
             # Persist block to history
             try:
