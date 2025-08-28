@@ -101,6 +101,23 @@ class AdvancedFormatter:
                 r"const\s+\w+",
                 r"=>",
             ],
+            "typescript": [
+                r"interface\s+\w+",
+                r"type\s+\w+\s*=",
+                r"export\s+(interface|type|class|const|function)",
+                r"import\s+\{?\w+",
+            ],
+            "go": [
+                r"package\s+\w+",
+                r"func\s+\w+\(",
+                r"import\s+\(",
+            ],
+            "rust": [
+                r"fn\s+\w+\(",
+                r"let\s+mut\s+\w+",
+                r"use\s+\w+::",
+                r"impl\s+\w+",
+            ],
             "json": [r"^\s*[{\[]", r'"\w+":\s*'],
             "yaml": [r"^\w+:", r"^\s+-\s+"],
             "xml": [r"<\w+.*?>", r"</\w+>"],
@@ -264,12 +281,19 @@ class AdvancedFormatter:
     def _format_code(self, content: str, width: int) -> Union[Syntax, Text]:
         """Format code content with language detection."""
         # Try to detect specific language
+        language_map = {
+            "python": "python",
+            "javascript": "javascript",
+            "typescript": "typescript",
+            "go": "go",
+            "rust": "rust",
+        }
         for lang, patterns in self.language_patterns.items():
-            if lang in ["python", "javascript"] and any(
+            if lang in language_map and any(
                 re.search(pattern, content, re.MULTILINE) for pattern in patterns
             ):
                 return Syntax(
-                    content, lang, theme="monokai", line_numbers=True, word_wrap=True
+                    content, language_map[lang], theme="monokai", line_numbers=True, word_wrap=True
                 )
 
         # Fallback to generic code highlighting
@@ -303,7 +327,7 @@ class AdvancedFormatter:
         return text
 
     def _format_log(self, content: str, width: int) -> Text:
-        """Format log output with timestamp and level highlighting."""
+        """Format log output with timestamp and level highlighting, including common formats (JSON, Nginx/Apache)."""
         text = Text()
         ts_pattern = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b")
         level_styles = {
@@ -318,7 +342,56 @@ class AdvancedFormatter:
         }
         level_pattern = re.compile(r"\b(CRITICAL|FATAL|ERROR|WARNING|WARN|INFO|DEBUG|TRACE)\b")
 
+        nginx_apache = re.compile(r"^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+\"(\w+)\s+([^\"]+)\s+HTTP\/[^\"]+\"\s+(\d{3})\s+(\S+)")
         for line in content.splitlines():
+            # Structured JSON logs (single-line JSON objects)
+            stripped = line.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    import json
+                    obj = json.loads(stripped)
+                    # Build a concise formatted line
+                    lvl = str(obj.get("level") or obj.get("lvl") or obj.get("severity") or "INFO").upper()
+                    msg = str(obj.get("msg") or obj.get("message") or obj.get("event") or "")
+                    method = obj.get("method")
+                    path = obj.get("path") or obj.get("url")
+                    status = obj.get("status") or obj.get("status_code")
+                    base = Text(f"{lvl}: ")
+                    base.stylize(level_styles.get(lvl, ""), 0, len(lvl)+2)
+                    base.append(msg)
+                    if method and path:
+                        base.append(" ")
+                        base.append(f"{method} {path}", style="cyan")
+                    if status is not None:
+                        s = int(status)
+                        sstyle = "green" if 200 <= s < 400 else ("yellow" if 400 <= s < 500 else "red")
+                        base.append(" ")
+                        base.append(str(s), style=sstyle)
+                    text.append(base)
+                    text.append("\n")
+                    continue
+                except Exception:
+                    pass
+            # Nginx/Apache logs
+            m = nginx_apache.match(line)
+            if m:
+                method = m.group(5)
+                path = m.group(6)
+                status = int(m.group(7))
+                sstyle = "green" if 200 <= status < 400 else ("yellow" if 400 <= status < 500 else "red")
+                ln = Text(line)
+                # Method + path highlight
+                idx = line.find(f'"{method} ')
+                if idx != -1:
+                    ln.stylize("cyan", idx+1, idx+1+len(method)+1+len(path))
+                # Status highlight
+                s_idx = line.rfind(str(status))
+                if s_idx != -1:
+                    ln.stylize(sstyle, s_idx, s_idx+len(str(status)))
+                text.append(ln)
+                text.append("\n")
+                continue
+            # Generic highlighting
             line_text = Text(line)
             # Highlight timestamp(s)
             for m in ts_pattern.finditer(line):
@@ -472,6 +545,9 @@ class AdvancedFormatter:
             or "PASSED" in line or "FAILED" in line or "ERROR" in line
         ):
             return {"title": "🧪 Test Results", "type": "test"}
+        # Individual test case lines (pytest nodeid or dot/letter status lines)
+        if re.match(r"^tests?\/.*::.*\s+(PASSED|FAILED|ERROR|SKIPPED)", line) or re.match(r"^tests?\/.*\.py\s+[.FEskx]+$", line):
+            return {"title": "🧪 Test Case", "type": "testcase"}
         
         # Package installation
         if any(keyword in line.lower() for keyword in ["installing", "downloading", "collecting"]):
@@ -511,10 +587,14 @@ class AdvancedFormatter:
         elif section_type == "test":
             # Test sections end when no more test-related lines
             for i, line in enumerate(lines[1:], 1):
-                if not any(keyword in line.lower() for keyword in ["test", "passed", "failed", "ok", "error"]):
+                if not any(keyword in line.lower() for keyword in ["test", "passed", "failed", "ok", "error", "collected", "session"]):
                     if i > 3:  # Ensure we get at least a few lines
                         return i
             return min(30, len(lines))
+        
+        elif section_type == "testcase":
+            # Single test case lines are short; include up to 3 lines around
+            return min(3, len(lines))
         
         elif section_type in ["build", "package", "docker"]:
             # These sections can be quite long
