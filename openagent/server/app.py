@@ -53,6 +53,7 @@ from openagent.core.observability import (
     get_metrics_collector,
     get_request_tracker,
 )
+from openagent.core.performance.resource_monitor import get_resource_monitor
 
 obs_logger = get_logger(__name__)
 metrics = get_metrics_collector()
@@ -68,6 +69,7 @@ import os as _os
 from openagent.core.performance.work_queue import get_work_queue, RequestPriority, UserLimits as WQUserLimits
 
 work_queue = None  # Initialized in lifespan
+resource_monitor = None  # Initialized in lifespan
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -135,6 +137,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         work_queue = get_work_queue()
 
+    # Initialize ResourceMonitor (observability/health)
+    try:
+        global resource_monitor
+        resource_monitor = get_resource_monitor()
+    except Exception:
+        resource_monitor = None
+
     # Background preload of the model to reduce first-token latency
     try:
         asyncio.create_task(default_agent.llm.load_model())
@@ -162,6 +171,12 @@ async def lifespan(app: FastAPI):
     try:
         if work_queue:
             await work_queue.shutdown()
+    except Exception:
+        pass
+    # Shutdown resource monitor
+    try:
+        if resource_monitor:
+            await resource_monitor.shutdown()
     except Exception:
         pass
     agents.clear()
@@ -675,12 +690,30 @@ async def health_check():
 
 @app.get("/healthz")
 async def healthz():
-    return {
-        "status": "ok",
+    # Enhanced health: include resource health summary when available
+    base = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "0.1.3",
         "agents": len(agents),
     }
+    try:
+        if resource_monitor:
+            report = await resource_monitor.get_system_health_report()
+            # Compact mapping
+            base.update(
+                {
+                    "status": report.get("status", "unknown"),
+                    "health_score": report.get("health_score"),
+                    "utilization": report.get("utilization"),
+                    "alerts": report.get("alerts"),
+                    "uptime": report.get("uptime"),
+                }
+            )
+        else:
+            base.update({"status": "ok"})
+    except Exception:
+        base.update({"status": "ok"})
+    return base
 
 
 @app.get("/readyz")
@@ -705,6 +738,40 @@ async def metrics_endpoint():
             metrics.record_workqueue_status(status)
     except Exception:
         pass
+    # Update ResourceMonitor gauges just-in-time
+    try:
+        if resource_monitor:
+            rm = resource_monitor.get_current_metrics()
+            # Convert to dict shape expected by record_resource_metrics
+            rm_dict = {
+                "timestamp": rm.timestamp,
+                "cpu": {
+                    "percent": rm.cpu.percent,
+                },
+                "memory": {
+                    "percent": rm.memory.percent,
+                },
+                "disk": {
+                    "percent": rm.disk.percent,
+                },
+                "network": {
+                    "bytes_sent_rate": rm.network.bytes_sent_rate,
+                    "bytes_recv_rate": rm.network.bytes_recv_rate,
+                },
+                "gpus": [
+                    {
+                        "gpu_id": g.gpu_id,
+                        "gpu_percent": g.gpu_percent,
+                        "memory_percent": g.memory_percent,
+                        "temperature": g.temperature,
+                    }
+                    for g in (rm.gpus or [])
+                ],
+            }
+            metrics.record_resource_metrics(rm_dict)
+    except Exception:
+        pass
+
     data = metrics.get_metrics()
     # Use Prometheus content type if available
     content_type = "text/plain; version=0.0.4; charset=utf-8"

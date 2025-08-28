@@ -423,6 +423,51 @@ class MetricsCollector:
             registry=self.registry,
         )
 
+        # Resource monitor metrics
+        self.cpu_percent = Gauge(
+            f"{self.namespace}_cpu_percent",
+            "CPU percent utilization",
+            registry=self.registry,
+        )
+        self.memory_percent = Gauge(
+            f"{self.namespace}_memory_percent",
+            "Memory percent utilization",
+            registry=self.registry,
+        )
+        self.disk_percent = Gauge(
+            f"{self.namespace}_disk_percent",
+            "Disk percent utilization (root)",
+            registry=self.registry,
+        )
+        self.net_bytes_sent_rate = Gauge(
+            f"{self.namespace}_network_bytes_sent_rate",
+            "Network bytes sent per second",
+            registry=self.registry,
+        )
+        self.net_bytes_recv_rate = Gauge(
+            f"{self.namespace}_network_bytes_recv_rate",
+            "Network bytes received per second",
+            registry=self.registry,
+        )
+        self.gpu_utilization = Gauge(
+            f"{self.namespace}_gpu_utilization_percent",
+            "GPU utilization percent",
+            ["gpu_id"],
+            registry=self.registry,
+        )
+        self.gpu_memory_percent = Gauge(
+            f"{self.namespace}_gpu_memory_percent",
+            "GPU memory percent",
+            ["gpu_id"],
+            registry=self.registry,
+        )
+        self.gpu_temperature = Gauge(
+            f"{self.namespace}_gpu_temperature_celsius",
+            "GPU temperature in Celsius",
+            ["gpu_id"],
+            registry=self.registry,
+        )
+
     def record_request(self, method: str, endpoint: str, status: int, duration: float):
         """Record HTTP request metrics."""
         if PROMETHEUS_AVAILABLE:
@@ -547,6 +592,49 @@ class MetricsCollector:
             for prio, size in queue_sizes.items():
                 key = f"workqueue_queue_size_{prio}"
                 self._metrics_data[key]["value"] = size
+
+    def record_resource_metrics(self, rm: Dict[str, Any]):
+        """Record ResourceMonitor metrics.
+
+        rm is expected to be a dict shaped like ResourceMetrics (see resource_monitor.py)
+        """
+        try:
+            cpu_percent = float(rm.get("cpu", {}).get("percent", 0.0))
+            memory_percent = float(rm.get("memory", {}).get("percent", 0.0))
+            disk_percent = float(rm.get("disk", {}).get("percent", 0.0))
+            net_sent_rate = float(rm.get("network", {}).get("bytes_sent_rate", 0.0))
+            net_recv_rate = float(rm.get("network", {}).get("bytes_recv_rate", 0.0))
+            gpus = rm.get("gpus", []) or []
+        except Exception:
+            cpu_percent = memory_percent = disk_percent = 0.0
+            net_sent_rate = net_recv_rate = 0.0
+            gpus = []
+
+        if PROMETHEUS_AVAILABLE:
+            try:
+                self.cpu_percent.set(cpu_percent)
+                self.memory_percent.set(memory_percent)
+                self.disk_percent.set(disk_percent)
+                self.net_bytes_sent_rate.set(net_sent_rate)
+                self.net_bytes_recv_rate.set(net_recv_rate)
+                for gpu in gpus:
+                    gid = str(gpu.get("gpu_id", 0))
+                    self.gpu_utilization.labels(gpu_id=gid).set(float(gpu.get("gpu_percent", 0.0)))
+                    self.gpu_memory_percent.labels(gpu_id=gid).set(float(gpu.get("memory_percent", 0.0)))
+                    self.gpu_temperature.labels(gpu_id=gid).set(float(gpu.get("temperature", 0.0)))
+            except Exception:
+                pass
+        else:
+            self._metrics_data["cpu_percent"]["value"] = cpu_percent
+            self._metrics_data["memory_percent"]["value"] = memory_percent
+            self._metrics_data["disk_percent"]["value"] = disk_percent
+            self._metrics_data["network_bytes_sent_rate"]["value"] = net_sent_rate
+            self._metrics_data["network_bytes_recv_rate"]["value"] = net_recv_rate
+            for gpu in gpus:
+                gid = str(gpu.get("gpu_id", 0))
+                self._metrics_data[f"gpu_{gid}_utilization_percent"]["value"] = float(gpu.get("gpu_percent", 0.0))
+                self._metrics_data[f"gpu_{gid}_memory_percent"]["value"] = float(gpu.get("memory_percent", 0.0))
+                self._metrics_data[f"gpu_{gid}_temperature_celsius"]["value"] = float(gpu.get("temperature", 0.0))
 
 
 class RequestTracker:
