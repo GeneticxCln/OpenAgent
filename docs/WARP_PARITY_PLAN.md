@@ -86,6 +86,42 @@ Milestone 2 (2–4 weeks)
   - Update WARP_COMPARISON.md to reflect what is actually wired.
   - Expand tests for command intelligence + block UI.
 
+Milestone Next (2 weeks)
+- Concurrency and backpressure (WorkQueue)
+  - Replace per-route semaphore with WorkQueue for /chat, /chat/stream, and /ws/chat
+  - Enforce per-user limits (rate, concurrent, queue depth) and priority scheduling
+  - Emit queue metrics (queue sizes by priority, throughput/min, avg queue time, retries)
+  - Return 429 or include a “queue position” when overloaded; for streaming, send an immediate start event with queue status
+  - Add server-side cancellation/timeouts and tests
+- Observability and health
+  - Integrate ResourceMonitor: expose CPU/mem/disk/network/GPU gauges on /metrics and provide richer /healthz (and optional /system/health)
+  - Replace private semaphore reads with explicit counters/gauges for active sessions
+  - Emit structured app metrics for block render events (privacy-permitting)
+- Terminal UI polish
+  - Syntax highlighting for outputs/diffs; render AI responses via Markdown
+  - Implement session save/load, search, and export; unify with CLI "blocks" history
+  - Optional interactive TUI mode where key bindings (j/k/o/…) are active in chat
+  - Improve folding heuristics (stack traces, diffs, logs)
+- Security and production defaults
+  - Restrictive CORS profile in prod; require auth for WS in prod; keep OPENAGENT_EXEC_STRICT by default on server; broaden redaction pass
+- API stability & docs
+  - Mark API status (alpha/beta), document streaming event shapes and error semantics
+  - Update WARP_PARITY_PLAN.md and WARP_COMPARISON.md; add an Implementation Matrix mapping features → code paths → tests
+- Testing and CI
+  - Add tests: WorkQueue integration, WS/SSE under load with rate limiting/cancellation, ResourceMonitor endpoints, TerminalRenderer session/search/export
+  - Consider mypy across core/ and server/ and tighten coverage gates
+- Developer ergonomics
+  - Ensure pyproject extras ([dev], [all]) include WS/monitoring deps
+  - Provide a minimal prod example (systemd/Docker) toggling strict auth, CORS, rate limits, WorkQueue concurrency
+
+Acceptance criteria
+- Queue: p95 queue wait and 429 behavior validated under load; queue metrics exposed
+- Observability: Resource gauges visible; health endpoint summarises status; explicit active sessions counters
+- UI: syntax-highlighted output or Markdown AI responses rendered; session save/search/export usable
+- Security: prod profile enables auth on WS and restricted CORS; redaction validated
+- Docs: streaming message formats documented; Implementation Matrix present
+- Tests: new suites added and passing in CI
+
 Milestone 3 (4–8 weeks)
 - Collaboration & sharing
   - Session export/import (JSONL or markdown transcript with blocks).
@@ -153,6 +189,73 @@ G. Docs/tests alignment
 
 ---
 
+3.1) Workstreams — Recommendations 1–7 (new)
+
+H. Concurrency and backpressure (WorkQueue)
+- [ ] Replace per-route semaphore with WorkQueue for /chat, /chat/stream, /ws/chat
+- [ ] Implement per-user limits (rate, concurrency, queue depth) and priority scheduling
+- [ ] Emit queue metrics (queue sizes by priority, throughput/min, avg queue time, retries)
+- [ ] Overload handling: 429 with Retry-After or include queue position; for streaming, send immediate start with queue status
+- [ ] Server-side cancellation, timeouts, and retry logic; add tests
+
+Acceptance criteria
+- [ ] Under synthetic load, 95th percentile queue wait tracked; 429 returned when queue full; queue metrics exported
+- [ ] Unit/integration tests validate fairness, retries, and timeouts
+
+I. Observability and health
+- [ ] Integrate ResourceMonitor with /metrics and richer /healthz (and optional /system/health)
+- [ ] Replace private semaphore reads with explicit active sessions counters/gauges
+- [ ] Emit structured metrics for block render events (privacy-permitting)
+
+Acceptance criteria
+- [ ] Resource gauges (CPU, memory, disk, network, GPU if present) visible in /metrics
+- [ ] Health endpoint summarizes resource status and recent alerts
+
+J. Terminal UI/UX polish
+- [ ] Syntax highlighting for outputs & diffs; Markdown rendering for AI responses
+- [ ] Implement session save/load, search, and block export; unify with CLI "blocks" history
+- [ ] Optional interactive TUI mode: key bindings (j/k/o/…) active during chat
+- [ ] Improve folding heuristics for stack traces, diffs, and long logs
+
+Acceptance criteria
+- [ ] Visual improvements verified; folding behaves intuitively for large outputs
+- [ ] Session save/search/export covered by tests
+
+K. Security and production defaults
+- [ ] Restrict CORS by default in production profile (env-controlled)
+- [ ] Require auth for WS in prod; document token management/rotation
+- [ ] Keep OPENAGENT_EXEC_STRICT enabled by default on server; docs on relaxing for dev
+- [ ] Redaction pass across CLI/server outputs and logs
+
+Acceptance criteria
+- [ ] Server starts in a safe prod profile with docs for overrides
+- [ ] Redaction tests cover common token formats and env-based secrets
+
+L. API stability and docs alignment
+- [ ] Declare API server status (alpha/beta); document streaming message formats and error semantics
+- [ ] Update WARP_PARITY_PLAN.md and WARP_COMPARISON.md to reflect wired vs planned
+- [ ] Add an Implementation Matrix mapping features → code paths → tests
+
+Acceptance criteria
+- [ ] Streaming message schema documented and referenced by tests
+- [ ] Implementation Matrix present in docs
+
+M. Testing and CI
+- [ ] Add tests for WorkQueue integration (fairness, retries, timeouts)
+- [ ] Add WS/SSE load tests with rate limiting and cancellation
+- [ ] Add ResourceMonitor endpoint tests and TerminalRenderer session/search/export tests
+- [ ] Consider mypy across core/ and server/; raise coverage gates
+
+Acceptance criteria
+- [ ] New tests pass in CI; coverage threshold maintained or increased
+
+N. Developer ergonomics and packaging
+- [ ] Ensure pyproject extras ([dev], [all]) include WS/monitoring deps for local dev
+- [ ] Provide minimal prod example (systemd/Docker) toggling strict auth, CORS, rate limits, WorkQueue concurrency
+
+Acceptance criteria
+- [ ] One-command local setup for dev; documented minimal prod bootstrap
+
 4) Design notes and interfaces
 
 4.1 Patch tool early interface
@@ -212,6 +315,23 @@ Semantics
 - UI adoption: block UI enabled by default and covered by tests.
 
 ---
+
+Additional metrics and success criteria (for recommendations 1–7)
+- Concurrency/Queue
+  - Queue sizes by priority, avg_queue_time, throughput_per_minute exported
+  - Overload behavior: 429 emitted when queue full; p95 queue wait tracked and documented
+- Streaming
+  - Time-to-first-token (TTFT) measured on warmed model; target documented (e.g., ≤1.5s best-effort)
+- Observability/Health
+  - Resource gauges exposed; health endpoint summarizes status and recent alerts
+- UI
+  - Block UI renders syntax-highlighted outputs or Markdown AI responses; session save/search/export tested
+- Security
+  - Default prod profile: auth required for WS, restricted CORS, exec strict enabled
+- Docs
+  - Streaming event schema and error semantics documented; Implementation Matrix present
+- Testing/CI
+  - Coverage maintained ≥ target (e.g., 80% core/server); type checks green if mypy enabled
 
 7) Execution guide (quick commands)
 

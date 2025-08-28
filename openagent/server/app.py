@@ -63,10 +63,11 @@ auth_manager = AuthManager()
 rate_limiter = RateLimiter()
 agents: Dict[str, Agent] = {}
 
-# Concurrency control for request processing (work queue)
+# Concurrency control for request processing via WorkQueue
 import os as _os
-_MAX_CONCURRENCY = int(_os.getenv("OPENAGENT_MAX_CONCURRENCY", "4"))
-_semaphore = asyncio.Semaphore(_MAX_CONCURRENCY)
+from openagent.core.performance.work_queue import get_work_queue, RequestPriority, UserLimits as WQUserLimits
+
+work_queue = None  # Initialized in lifespan
 
 # Security
 security = HTTPBearer(auto_error=False)
@@ -120,6 +121,20 @@ async def lifespan(app: FastAPI):
     )
     agents["default"] = default_agent
 
+    # Initialize global WorkQueue (concurrency/backpressure)
+    try:
+        max_workers = int(_os.getenv("OPENAGENT_MAX_WORKERS", _os.getenv("OPENAGENT_MAX_CONCURRENCY", "4")))
+        max_queue_size = int(_os.getenv("OPENAGENT_QUEUE_SIZE", "100"))
+        default_timeout = float(_os.getenv("OPENAGENT_DEFAULT_TIMEOUT", "60"))
+        global work_queue
+        work_queue = get_work_queue(
+            max_workers=max_workers,
+            max_queue_size=max_queue_size,
+            default_timeout=default_timeout,
+        )
+    except Exception:
+        work_queue = get_work_queue()
+
     # Background preload of the model to reduce first-token latency
     try:
         asyncio.create_task(default_agent.llm.load_model())
@@ -143,6 +158,12 @@ async def lifespan(app: FastAPI):
     for agent in agents.values():
         if hasattr(agent, "llm") and agent.llm:
             await agent.llm.unload_model()
+    # Shutdown work queue
+    try:
+        if work_queue:
+            await work_queue.shutdown()
+    except Exception:
+        pass
     agents.clear()
     logger.info("OpenAgent server shut down")
     try:
@@ -150,6 +171,24 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+
+# Helper to apply per-user WorkQueue limits from env (if configured)
+async def _apply_user_limits_if_configured(identifier: Optional[str]):
+    if not identifier:
+        return
+    try:
+        mc = _os.getenv("OPENAGENT_USER_MAX_CONCURRENT")
+        mq = _os.getenv("OPENAGENT_USER_MAX_QUEUE_SIZE")
+        rl = _os.getenv("OPENAGENT_USER_RATE_LIMIT_PER_MIN")
+        if mc or mq or rl:
+            limits = WQUserLimits(
+                max_concurrent=int(mc) if mc else WQUserLimits().max_concurrent,
+                max_queue_size=int(mq) if mq else WQUserLimits().max_queue_size,
+                rate_limit_per_minute=int(rl) if rl else WQUserLimits().rate_limit_per_minute,
+            )
+            await work_queue.set_user_limits(identifier, limits)
+    except Exception:
+        pass
 
 # Create FastAPI app
 app = FastAPI(
@@ -291,10 +330,9 @@ async def _stream_chat_response(agent: Agent, message: str):
         and callable(getattr(llm, "stream_generate"))
     ):
         try:
-            # Bound concurrency when streaming directly from LLM
-            async with _semaphore:
-                async for token in llm.stream_generate(message):
-                    yield token
+            # Stream directly from LLM; WorkQueue limits concurrency globally
+            async for token in llm.stream_generate(message):
+                yield token
             return
         except Exception as e:
             logger.warning(f"LLM streaming failed, falling back: {e}")
@@ -340,14 +378,64 @@ async def websocket_endpoint(ws: WebSocket):
                         )
                     )
                     continue
-                # Start event (optional)
-                await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
 
-                async for chunk in _stream_chat_response(
-                    agents[agent_name], payload["message"]
-                ):
-                    await ws.send_text(json.dumps({"content": chunk}))
-                await ws.send_text(json.dumps({"event": "end"}))
+                # WorkQueue-gated streaming
+                request_id = str(_uuid.uuid4())
+                user_id = ws.client.host if ws.client else None
+
+                async def _task_stream(agent_ref: Agent, msg: str):
+                    async for token in _stream_chat_response(agent_ref, msg):
+                        if token:
+                            await ws.send_text(json.dumps({"content": token}))
+                    return True
+
+                # Apply per-user limits if configured
+                await _apply_user_limits_if_configured(user_id)
+
+                submit_task = asyncio.create_task(
+                    work_queue.submit(
+                        _task_stream,
+                        agents[agent_name],
+                        payload["message"],
+                        priority=RequestPriority.NORMAL,
+                        user_id=user_id,
+                        request_id=request_id,
+                    )
+                )
+                await asyncio.sleep(0)
+                if submit_task.done():
+                    exc = submit_task.exception()
+                    if exc:
+                        try:
+                            qs = await work_queue.get_queue_status()
+                        except Exception:
+                            qs = {}
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": "queue_overloaded",
+                                    "message": str(exc),
+                                    "queue": qs,
+                                }
+                            )
+                        )
+                        continue
+
+                # Start event with queue status
+                try:
+                    qs = await work_queue.get_queue_status()
+                    await ws.send_text(
+                        json.dumps({"event": "start", "agent": agent_name, "queue": qs})
+                    )
+                except Exception:
+                    await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+
+                try:
+                    await submit_task
+                    await ws.send_text(json.dumps({"event": "end"}))
+                except Exception as e:
+                    await ws.send_text(json.dumps({"type": "error", "error": str(e)}))
                 continue
             # Otherwise, delegate to generic handler for backward-compatible protocols
             await ws_handler.handle(
@@ -431,13 +519,64 @@ async def websocket_chat(ws: WebSocket):
                         )
                     )
                     continue
-                await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
 
-                async for chunk in _stream_chat_response(
-                    agents[agent_name], payload["message"]
-                ):
-                    await ws.send_text(json.dumps({"content": chunk}))
-                await ws.send_text(json.dumps({"event": "end"}))
+                # WorkQueue-gated streaming
+                request_id = str(_uuid.uuid4())
+                user_id = ws.client.host if ws.client else None
+
+                async def _task_stream(agent_ref: Agent, msg: str):
+                    async for token in _stream_chat_response(agent_ref, msg):
+                        if token:
+                            await ws.send_text(json.dumps({"content": token}))
+                    return True
+
+                # Apply per-user limits if configured
+                await _apply_user_limits_if_configured(user_id)
+
+                submit_task = asyncio.create_task(
+                    work_queue.submit(
+                        _task_stream,
+                        agents[agent_name],
+                        payload["message"],
+                        priority=RequestPriority.NORMAL,
+                        user_id=user_id,
+                        request_id=request_id,
+                    )
+                )
+                await asyncio.sleep(0)
+                if submit_task.done():
+                    exc = submit_task.exception()
+                    if exc:
+                        try:
+                            qs = await work_queue.get_queue_status()
+                        except Exception:
+                            qs = {}
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "error": "queue_overloaded",
+                                    "message": str(exc),
+                                    "queue": qs,
+                                }
+                            )
+                        )
+                        continue
+
+                # Start event with queue status
+                try:
+                    qs = await work_queue.get_queue_status()
+                    await ws.send_text(
+                        json.dumps({"event": "start", "agent": agent_name, "queue": qs})
+                    )
+                except Exception:
+                    await ws.send_text(json.dumps({"event": "start", "agent": agent_name}))
+
+                try:
+                    await submit_task
+                    await ws.send_text(json.dumps({"event": "end"}))
+                except Exception as e:
+                    await ws.send_text(json.dumps({"type": "error", "error": str(e)}))
                 continue
             await ws_handler.handle(
                 connection_id, ws_manager.get_client(connection_id).info, raw_text
@@ -559,6 +698,13 @@ async def readyz():
 # Metrics endpoint
 @app.get("/metrics")
 async def metrics_endpoint():
+    # Update WorkQueue gauges just-in-time
+    try:
+        if work_queue:
+            status = await work_queue.get_queue_status()
+            metrics.record_workqueue_status(status)
+    except Exception:
+        pass
     data = metrics.get_metrics()
     # Use Prometheus content type if available
     content_type = "text/plain; version=0.0.4; charset=utf-8"
@@ -642,13 +788,14 @@ async def login(request: LoginRequest) -> LoginResponse:
 # Chat endpoints
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
-    request: ChatRequest,
+    chat_request: ChatRequest,
     background_tasks: BackgroundTasks,
     user: Optional[User] = Depends(get_current_user),
     _rate_limit: None = Depends(check_rate_limit),
+    http_request: Request = None,
 ):
     """Process a chat message with the agent."""
-    agent_name = request.agent or "default"
+    agent_name = chat_request.agent or "default"
 
     if agent_name not in agents:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
@@ -656,11 +803,23 @@ async def chat(
     agent = agents[agent_name]
 
     try:
-        # Process message (bounded concurrency)
-        async with _semaphore:
-            start_time = time.time()
-            response = await agent.process_message(request.message)
-            processing_time = time.time() - start_time
+        # Process message via WorkQueue (bounded concurrency/backpressure)
+        async def _process(agent_ref: Agent, msg: str):
+            return await agent_ref.process_message(msg)
+
+        # Determine user identifier for WorkQueue limits (user id or client IP)
+        identifier = user.id if user else rate_limiter.get_client_ip(http_request)
+        await _apply_user_limits_if_configured(identifier)
+
+        start_time = time.time()
+        response = await work_queue.submit(
+            _process,
+            agent,
+            chat_request.message,
+            priority=RequestPriority.NORMAL,
+            user_id=identifier,
+        )
+        processing_time = time.time() - start_time
 
         # Log usage
         if user:
@@ -699,43 +858,99 @@ async def chat(
 
 @app.post("/chat/stream")
 async def chat_stream(
-    request: ChatRequest,
+    chat_request: ChatRequest,
     user: Optional[User] = Depends(get_current_user),
     _rate_limit: None = Depends(check_rate_limit),
+    http_request: Request = None,
 ):
-    """Stream a chat response using Server-Sent Events (SSE).
-    Attempts real incremental streaming if supported by the model, otherwise
-    falls back to chunking the final response.
-    """
-    agent_name = request.agent or "default"
+    """Stream a chat response using Server-Sent Events (SSE) with WorkQueue gating."""
+    agent_name = chat_request.agent or "default"
     if agent_name not in agents:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
 
     agent = agents[agent_name]
 
+    # Prepare streaming queue and task submission
+    chunks_q: asyncio.Queue[str] = asyncio.Queue()
+    request_id = str(_uuid.uuid4())
+    user_id = user.id if user else (rate_limiter.get_client_ip(http_request) if http_request else None)
+
+    async def _task_stream(agent_ref: Agent, msg: str):
+        async for token in _stream_chat_response(agent_ref, msg):
+            if token:
+                try:
+                    await chunks_q.put(token)
+                except Exception:
+                    # If client disconnected, best-effort to stop early
+                    break
+        # Signal completion
+        await chunks_q.put("__OPENAGENT_STREAM_END__")
+        return True
+
+    # Enqueue the task and preflight capacity
+    # Apply per-user limits if configured
+    await _apply_user_limits_if_configured(user_id)
+
+    submit_task = asyncio.create_task(
+        work_queue.submit(
+            _task_stream,
+            agent,
+            chat_request.message,
+            priority=RequestPriority.NORMAL,
+            user_id=user_id,
+            request_id=request_id,
+        )
+    )
+
+    # Give the loop a chance to run submit() and detect immediate failures
+    await asyncio.sleep(0)
+    if submit_task.done():
+        exc = submit_task.exception()
+        if exc:
+            # Queue full or limits exceeded → 429
+            try:
+                qs = await work_queue.get_queue_status()
+            except Exception:
+                qs = {}
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "queue_overloaded",
+                    "message": str(exc),
+                    "queue": qs,
+                },
+            )
+
     async def event_generator():
         try:
-            # Bound concurrency with semaphore (work queue)
-            async with _semaphore:
-                # Track active sessions metric
-                try:
-                    metrics.update_active_sessions(_MAX_CONCURRENCY - _semaphore._value)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                # Send a start event
-                yield f"event: start\ndata: {json.dumps({'agent': agent_name})}\n\n"
-                async for chunk in _stream_chat_response(agent, request.message):
-                    if not chunk:
-                        continue
-                    yield f"data: {json.dumps({'content': chunk})}\n\n"
-                # End event
-                yield "event: end\ndata: {}\n\n"
+            # Report start with queue status
+            try:
+                qs = await work_queue.get_queue_status()
+                metrics.update_active_sessions(qs.get("active_requests", 0))
+                start_payload = {"agent": agent_name, "queue": qs}
+            except Exception:
+                start_payload = {"agent": agent_name}
+            yield f"event: start\ndata: {json.dumps(start_payload)}\n\n"
+
+            # Stream chunks from queue until end sentinel
+            while True:
+                token = await chunks_q.get()
+                if token == "__OPENAGENT_STREAM_END__":
+                    break
+                yield f"data: {json.dumps({'content': token})}\n\n"
+            yield "event: end\ndata: {}\n\n"
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
         finally:
-            # Update active sessions metric
             try:
-                metrics.update_active_sessions(_MAX_CONCURRENCY - _semaphore._value)  # type: ignore[attr-defined]
+                qs = await work_queue.get_queue_status()
+                metrics.update_active_sessions(qs.get("active_requests", 0))
+            except Exception:
+                pass
+            # Best-effort cancel if still running
+            try:
+                if not submit_task.done():
+                    await work_queue.cancel_request(request_id)
             except Exception:
                 pass
 

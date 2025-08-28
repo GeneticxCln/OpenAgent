@@ -399,6 +399,30 @@ class MetricsCollector:
             registry=self.registry,
         )
 
+        # WorkQueue metrics
+        self.wq_active_requests = Gauge(
+            f"{self.namespace}_workqueue_active_requests",
+            "Active requests in WorkQueue",
+            registry=self.registry,
+        )
+        self.wq_active_workers = Gauge(
+            f"{self.namespace}_workqueue_active_workers",
+            "Active workers in WorkQueue",
+            registry=self.registry,
+        )
+        self.wq_total_queued = Gauge(
+            f"{self.namespace}_workqueue_total_queued",
+            "Total queued requests in WorkQueue",
+            registry=self.registry,
+        )
+        # Per-priority queue sizes
+        self.wq_queue_size = Gauge(
+            f"{self.namespace}_workqueue_queue_size",
+            "WorkQueue size by priority",
+            ["priority"],
+            registry=self.registry,
+        )
+
     def record_request(self, method: str, endpoint: str, status: int, duration: float):
         """Record HTTP request metrics."""
         if PROMETHEUS_AVAILABLE:
@@ -494,6 +518,35 @@ class MetricsCollector:
     def get_metrics_dict(self) -> Dict[str, Any]:
         """Get metrics as a dictionary."""
         return dict(self._metrics_data)
+
+    def record_workqueue_status(self, status: Dict[str, Any]):
+        """Record WorkQueue status into metrics collector."""
+        try:
+            active_requests = int(status.get("active_requests", 0))
+            active_workers = int(status.get("active_workers", 0))
+            total_queued = int(status.get("total_queued", 0))
+            queue_sizes = status.get("queue_sizes", {}) or {}
+        except Exception:
+            active_requests = active_workers = total_queued = 0
+            queue_sizes = {}
+
+        if PROMETHEUS_AVAILABLE:
+            try:
+                self.wq_active_requests.set(active_requests)
+                self.wq_active_workers.set(active_workers)
+                self.wq_total_queued.set(total_queued)
+                for prio, size in queue_sizes.items():
+                    self.wq_queue_size.labels(priority=str(prio)).set(size)
+            except Exception:
+                pass
+        else:
+            # Fallback text metrics
+            self._metrics_data["workqueue_active_requests"]["value"] = active_requests
+            self._metrics_data["workqueue_active_workers"]["value"] = active_workers
+            self._metrics_data["workqueue_total_queued"]["value"] = total_queued
+            for prio, size in queue_sizes.items():
+                key = f"workqueue_queue_size_{prio}"
+                self._metrics_data[key]["value"] = size
 
 
 class RequestTracker:
