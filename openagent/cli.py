@@ -609,6 +609,14 @@ async def chat_loop(
             # Get user input
             user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
 
+            # If using block UI, interpret single-key shortcuts at the prompt (press key and Enter)
+            if use_blocks and renderer and user_input in {"o","j","k","l","s","r","/","n","p","e","t","g"}:
+                try:
+                    renderer.handle_keypress(user_input)
+                except Exception:
+                    pass
+                continue
+
             if not user_input:
                 continue
 

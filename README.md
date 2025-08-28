@@ -135,6 +135,8 @@ Keyboard shortcuts (interactive renderer):
 - t: add a tag to the selected block
 - g: go to block by ID or number
 
+Tip: In the default chat prompt, type the shortcut key and press Enter (e.g., type `o` then Enter to fold/unfold the selected block).
+
 Programmatic hooks (for non-interactive usage):
 - save_session(path=None) → Path: persist current blocks/selection to JSON
 - load_session(path=None) → int: restore a session; returns number of blocks
@@ -157,6 +159,23 @@ Formatter improvements:
 - Diffs: colored with diff lexer (or fallback), including headers/index/hunks.
 - Logs: timestamp and level highlighting (INFO/WARN/ERROR/etc.).
 - Folding heuristics: better grouping for stack traces, test output, git, and logs on large outputs.
+
+### Session persistence (save, load, export)
+
+You can persist your session (blocks and selection) to resume later.
+
+- At the prompt: press `s` then Enter to save; `r` to reload; `e` to export to markdown.
+- Programmatically:
+
+```python path=null start=null
+from openagent.ui.renderer import create_terminal_renderer
+r = create_terminal_renderer()
+# ... create blocks during your run ...
+r.save_session()                 # saves to ./.openagent_session.json
+r.load_session()                 # reloads from that file
+r.export()                       # writes ./openagent_history.md
+r.export("history.json","json")  # export as JSON
+```
 
 ## 🎯 Usage Examples
 
