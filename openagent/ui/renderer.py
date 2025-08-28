@@ -9,6 +9,7 @@ import asyncio
 import threading
 import time
 from typing import Any, Dict, List, Optional, Union
+from pathlib import Path
 
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -42,6 +43,12 @@ class TerminalRenderer:
         self.show_block_list = False
         self.show_help = False
         self.current_mode = "normal"  # normal, block_list, help
+        
+        # Session and search state
+        self._session_path: Path = Path.cwd() / ".openagent_session.json"
+        self.search_results: List[int] = []
+        self.search_index: int = -1
+        self.last_search_query: Optional[str] = None
 
         # Keyboard shortcuts
         self.shortcuts = {
@@ -313,49 +320,176 @@ class TerminalRenderer:
         self.output_folder.unfold_all()
         self._update_display()
 
+    # Public hooks for session, search, and export
+    def save_session(self, path: Optional[Union[str, Path]] = None) -> Path:
+        """Save current session to JSON. Returns the path written."""
+        if path is not None:
+            self._session_path = Path(path)
+        self._save_session()
+        return self._session_path
+
+    def load_session(self, path: Optional[Union[str, Path]] = None) -> int:
+        """Load session from JSON. Returns count of loaded blocks."""
+        if path is not None:
+            self._session_path = Path(path)
+        self._reload_session()
+        return len(self.block_manager.blocks)
+
+    def search(self, query: str) -> List[int]:
+        """Programmatic search: set results and return matching indices."""
+        self.last_search_query = (query or "").strip()
+        if not self.last_search_query:
+            self.search_results = []
+            self.search_index = -1
+            return []
+        matches = self.block_manager.search_blocks(self.last_search_query)
+        target_ids = {b.id for b in matches}
+        self.search_results = [i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids]
+        self.search_index = 0 if self.search_results else -1
+        return list(self.search_results)
+
+    def export(self, path: Optional[Union[str, Path]] = None, format: str = "markdown") -> Path:
+        """Export blocks to file. Returns the path written."""
+        content = self.block_manager.export_blocks(format=format)
+        out_path = Path(path) if path is not None else (Path.cwd() / ("openagent_history.md" if format == "markdown" else "openagent_history.json"))
+        with out_path.open("w", encoding="utf-8") as f:
+            f.write(content)
+        return out_path
+
     def _save_session(self):
-        """Save current session."""
-        # TODO: Implement session saving
-        pass
+        """Save current session to a JSON file in the current directory."""
+        try:
+            import json, time as _t
+            data = {
+                "version": 1,
+                "timestamp": _t.time(),
+                "selected_index": self.block_manager.selected_index,
+                "blocks": [b.to_dict() for b in self.block_manager.blocks],
+            }
+            with self._session_path.open("w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            # Best-effort user feedback without breaking live display
+            self.console.log(f"Session saved to {self._session_path}")
+        except Exception as e:
+            self.console.log(f"Failed to save session: {e}")
 
     def _reload_session(self):
-        """Reload saved session."""
-        # TODO: Implement session loading
-        pass
+        """Reload saved session from the default JSON file."""
+        try:
+            import json
+            if not self._session_path.exists():
+                self.console.log(f"No session file found at {self._session_path}")
+                return
+            with self._session_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Restore blocks
+            self.block_manager.clear_blocks()
+            blocks_data = data.get("blocks", [])
+            from .blocks import CommandBlock  # local import to avoid cycles
+            for bd in blocks_data:
+                blk = CommandBlock.from_dict(bd)
+                self.block_manager.add_block(blk)
+            # Restore selection
+            sel = data.get("selected_index")
+            if isinstance(sel, int) and 0 <= sel < len(self.block_manager.blocks):
+                self.block_manager.select_block(sel)
+            self._update_display()
+            self.console.log(f"Session loaded from {self._session_path}")
+        except Exception as e:
+            self.console.log(f"Failed to load session: {e}")
 
     def _quit_renderer(self):
         """Quit the renderer."""
         self.stop_live_display()
 
     def _search_blocks(self):
-        """Search blocks."""
-        # TODO: Implement block search
-        pass
+        """Search blocks and jump to the first result.
+
+        Prompts for a query using console.input. Results can be navigated with 'n'/'p'.
+        """
+        try:
+            query = self.console.input("Search query: ").strip()
+        except Exception:
+            query = ""
+        if not query:
+            return
+        self.last_search_query = query
+        # Compute matching indices
+        matches = self.block_manager.search_blocks(query)
+        target_ids = {b.id for b in matches}
+        self.search_results = [i for i, b in enumerate(self.block_manager.blocks) if b.id in target_ids]
+        if not self.search_results:
+            self.console.log("No matches found")
+            return
+        self.search_index = 0
+        self.block_manager.select_block(self.search_results[0])
+        self._update_display()
 
     def _next_search_result(self):
         """Go to next search result."""
-        # TODO: Implement search navigation
-        pass
+        if not self.search_results:
+            # If no results but we have a previous query, rerun it
+            if self.last_search_query:
+                self._search_blocks()
+            return
+        self.search_index = (self.search_index + 1) % len(self.search_results)
+        self.block_manager.select_block(self.search_results[self.search_index])
+        self._update_display()
 
     def _previous_search_result(self):
         """Go to previous search result."""
-        # TODO: Implement search navigation
-        pass
+        if not self.search_results:
+            if self.last_search_query:
+                self._search_blocks()
+            return
+        self.search_index = (self.search_index - 1) % len(self.search_results)
+        self.block_manager.select_block(self.search_results[self.search_index])
+        self._update_display()
 
     def _export_blocks(self):
-        """Export blocks."""
-        # TODO: Implement block export
-        pass
+        """Export blocks to a Markdown file in the current directory."""
+        try:
+            content = self.block_manager.export_blocks(format="markdown")
+            out_path = Path.cwd() / "openagent_history.md"
+            with out_path.open("w", encoding="utf-8") as f:
+                f.write(content)
+            self.console.log(f"Exported history to {out_path}")
+        except Exception as e:
+            self.console.log(f"Failed to export blocks: {e}")
 
     def _add_tag_to_block(self):
         """Add tag to current block."""
-        # TODO: Implement tag addition
-        pass
+        block = self.block_manager.get_selected_block()
+        if not block:
+            return
+        try:
+            tag = self.console.input("Tag to add: ").strip()
+        except Exception:
+            tag = ""
+        if not tag:
+            return
+        block.add_tag(tag)
+        self._update_display()
 
     def _go_to_block(self):
-        """Go to block by ID."""
-        # TODO: Implement block navigation by ID
-        pass
+        """Go to block by ID or number."""
+        try:
+            target = self.console.input("Block ID or number: ").strip()
+        except Exception:
+            target = ""
+        if not target:
+            return
+        # Number-based selection
+        if target.isdigit():
+            self._select_block_by_number(int(target))
+            return
+        # ID-based selection (prefix match allowed)
+        for idx, blk in enumerate(self.block_manager.blocks):
+            if blk.id.startswith(target):
+                self.block_manager.select_block(idx)
+                self._update_display()
+                return
+        self.console.log(f"Block '{target}' not found")
 
     def _select_block_by_number(self, number: int):
         """Select block by number."""
@@ -365,12 +499,25 @@ class TerminalRenderer:
 
     def handle_keypress(self, key: str) -> bool:
         """Handle keyboard input."""
+        # Enter toggles fold or confirms selection in list view
+        if key in ("\r", "\n"):
+            if self.current_mode == "block_list":
+                self.current_mode = "normal"
+                self._update_display()
+            else:
+                self._toggle_output_fold()
+            return True
+        
+        # Map regular keys
         if key in self.shortcuts:
             self.shortcuts[key]()
             return True
-        elif key.isdigit():
+        
+        # Digit selection
+        if key.isdigit():
             self._select_block_by_number(int(key))
             return True
+        
         return False
 
     def render_progress(self, description: str, total: Optional[int] = None) -> str:

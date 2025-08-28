@@ -177,8 +177,15 @@ class AdvancedFormatter:
         if any(indicator in content_lower for indicator in error_indicators):
             return OutputType.ERROR
 
-        # Check for markdown
-        markdown_patterns = [r"^#+\s+", r"\*\*\w+\*\*", r"`\w+`", r"^\s*[-*+]\s+"]
+        # Check for markdown (headers, bold/italic, code fences, tables, lists)
+        markdown_patterns = [
+            r"^#+\s+",                 # headers
+            r"\*\*.+?\*\*",          # bold
+            r"`{1,3}.+?`{1,3}",        # inline or fenced markers
+            r"^\s*[-*+]\s+",          # lists
+            r"^\|.+\|\s*$",          # table row
+            r"^\s{0,3}```",            # fenced block start
+        ]
         if any(
             re.search(pattern, content, re.MULTILINE) for pattern in markdown_patterns
         ):
@@ -189,10 +196,17 @@ class AdvancedFormatter:
     def format_content(
         self,
         content: str,
-        output_type: Optional[OutputType] = None,
+        output_type: Optional[Union[OutputType, str]] = None,
         width: Optional[int] = None,
     ) -> Union[Text, Syntax, Markdown]:
         """Format content based on its type."""
+        # Accept string output_type for compatibility
+        if isinstance(output_type, str):
+            try:
+                output_type = OutputType(output_type.lower())
+            except Exception:
+                output_type = None
+        
         if output_type is None:
             output_type = self.detect_output_type(content)
 
@@ -204,18 +218,6 @@ class AdvancedFormatter:
             return self._format_json(content, width)
         elif output_type == OutputType.CODE:
             return self._format_code(content, width)
-        elif output_type == OutputType.PYTHON:
-            return Syntax(
-                content, "python", theme="monokai", line_numbers=True, word_wrap=True
-            )
-        elif output_type == OutputType.JAVASCRIPT:
-            return Syntax(
-                content,
-                "javascript",
-                theme="monokai",
-                line_numbers=True,
-                word_wrap=True,
-            )
         elif output_type == OutputType.SQL:
             return Syntax(
                 content, "sql", theme="monokai", line_numbers=True, word_wrap=True
@@ -239,7 +241,7 @@ class AdvancedFormatter:
         elif output_type == OutputType.ERROR:
             return self._format_error(content, width)
         elif output_type == OutputType.MARKDOWN:
-            return Markdown(content)
+            return Markdown(content, code_theme="monokai")
         else:
             # Plain text with basic highlighting
             return self._format_plain(content, width)
@@ -275,41 +277,61 @@ class AdvancedFormatter:
             content, "text", theme="monokai", line_numbers=True, word_wrap=True
         )
 
-    def _format_diff(self, content: str, width: int) -> Text:
-        """Format diff output with colors."""
+    def _format_diff(self, content: str, width: int) -> Union[Syntax, Text]:
+        """Format diff output with colors or Syntax diff lexer."""
+        # Prefer Syntax 'diff' lexer for better highlighting if content resembles a diff
+        try:
+            if re.search(r"^diff\s|^@@|^\+|^\-", content, re.MULTILINE):
+                return Syntax(content, "diff", theme="monokai", line_numbers=False, word_wrap=True)
+        except Exception:
+            pass
+        # Fallback manual coloring
         text = Text()
-
         for line in content.splitlines():
-            if line.startswith("+"):
+            if line.startswith("+++") or line.startswith("---"):
+                text.append(line + "\n", style="bold blue")
+            elif line.startswith("+"):
                 text.append(line + "\n", style="green")
             elif line.startswith("-"):
                 text.append(line + "\n", style="red")
             elif line.startswith("@@"):
                 text.append(line + "\n", style="cyan")
-            elif line.startswith("diff"):
-                text.append(line + "\n", style="bold blue")
+            elif line.startswith("index "):
+                text.append(line + "\n", style="magenta")
             else:
-                text.append(line + "\n", style="white")
-
+                text.append(line + "\n")
         return text
 
     def _format_log(self, content: str, width: int) -> Text:
-        """Format log output with level-based colors."""
+        """Format log output with timestamp and level highlighting."""
         text = Text()
+        ts_pattern = re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b")
+        level_styles = {
+            "CRITICAL": "bold red",
+            "FATAL": "bold red",
+            "ERROR": "red",
+            "WARNING": "yellow",
+            "WARN": "yellow",
+            "INFO": "cyan",
+            "DEBUG": "dim",
+            "TRACE": "dim",
+        }
+        level_pattern = re.compile(r"\b(CRITICAL|FATAL|ERROR|WARNING|WARN|INFO|DEBUG|TRACE)\b")
 
         for line in content.splitlines():
-            line_lower = line.lower()
-            if "error" in line_lower or "fatal" in line_lower:
-                text.append(line + "\n", style="bold red")
-            elif "warning" in line_lower or "warn" in line_lower:
-                text.append(line + "\n", style="yellow")
-            elif "info" in line_lower:
-                text.append(line + "\n", style="cyan")
-            elif "debug" in line_lower:
-                text.append(line + "\n", style="dim")
-            else:
-                text.append(line + "\n", style="white")
-
+            line_text = Text(line)
+            # Highlight timestamp(s)
+            for m in ts_pattern.finditer(line):
+                start, end = m.span()
+                line_text.stylize("dim", start, end)
+            # Highlight level token(s)
+            for m in level_pattern.finditer(line):
+                start, end = m.span()
+                style = level_styles.get(m.group(1), "")
+                if style:
+                    line_text.stylize(style, start, end)
+            text.append(line_text)
+            text.append("\n")
         return text
 
     def _format_error(self, content: str, width: int) -> Text:
@@ -443,8 +465,12 @@ class AdvancedFormatter:
         if any(keyword in line.lower() for keyword in ["compiling", "building", "linking"]):
             return {"title": "🔨 Build Output", "type": "build"}
         
-        # Test output
-        if re.match(r".*test.*\.\.\.", line, re.IGNORECASE) or "PASSED" in line or "FAILED" in line:
+        # Test output (pytest/unittest)
+        if (
+            re.match(r".*test.*\.\.\.", line, re.IGNORECASE)
+            or re.search(r"=+\s*test session starts\s*=+", line, re.IGNORECASE)
+            or "PASSED" in line or "FAILED" in line or "ERROR" in line
+        ):
             return {"title": "🧪 Test Results", "type": "test"}
         
         # Package installation
@@ -495,18 +521,24 @@ class AdvancedFormatter:
             return min(50, len(lines))
         
         elif section_type == "git":
-            # Git commits and diffs can be long
-            return min(40, len(lines))
+            # Git commits and diffs can be long; stop at next commit/diff marker
+            for i, line in enumerate(lines[1:], 1):
+                if line.startswith("commit") or line.startswith("diff --git"):
+                    return i
+            return min(80, len(lines))
         
         elif section_type == "logs":
-            # Log sections - group consecutive log entries
+            # Log sections - group consecutive log entries by timestamp pattern
             for i, line in enumerate(lines[1:], 1):
                 if not re.match(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}", line):
                     if i > 5:  # At least 5 log entries
                         return i
-            return min(25, len(lines))
+            return min(50, len(lines))
         
-        # Default: small sections
+        # Default: section split on blank-line runs or small cap
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == "" and (i + 1 < len(lines) and lines[i + 1].strip() == ""):
+                return i + 1
         return min(10, len(lines))
     
     def _create_size_based_sections(self, lines: List[str], max_section_lines: int) -> List[FoldableSection]:

@@ -19,6 +19,10 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 from rich.tree import Tree
+from rich.table import Table
+
+# Enhanced formatting
+from .formatting import AdvancedFormatter
 
 
 class BlockType(Enum):
@@ -415,12 +419,19 @@ class BlockRenderer:
     def __init__(self, console: Optional[Console] = None):
         """Initialize block renderer."""
         self.console = console or Console()
+        self.formatter = AdvancedFormatter(self.console)
 
     def render_block(self, block: CommandBlock, width: Optional[int] = None) -> Panel:
         """Render a single command block with enhanced Warp-style visual formatting."""
         from rich.layout import Layout
         from rich.table import Table
         from rich.console import Group
+        
+        # Special handling for AI response blocks: render as Markdown
+        if block.block_type == BlockType.AI_RESPONSE:
+            md = self.formatter.format_content(block.output or "", "markdown")
+            title_text = self._create_enhanced_title(block, "cyan")
+            return Panel(md, title=title_text, border_style="cyan", expand=False, width=width, padding=(0,1))
         
         # Create main content group
         content_elements = []
@@ -434,15 +445,15 @@ class BlockRenderer:
         # 2. Output sections with smart folding
         if not block.collapsed:
             if block.output:
-                output_section = self._render_output_section(block.output, "Output", "white")
+                output_section = self._render_output_section(block.output, "Output", "white", width)
                 content_elements.append(output_section)
                 
             if block.error:
-                error_section = self._render_output_section(block.error, "Error", "red")
+                error_section = self._render_output_section(block.error, "Error", "red", width, is_error=True)
                 content_elements.append(error_section)
                 
             if block.ai_explanation:
-                ai_section = self._render_ai_section(block.ai_explanation)
+                ai_section = self._render_ai_section(block.ai_explanation, width)
                 content_elements.append(ai_section)
         else:
             # Collapsed state with summary
@@ -508,35 +519,39 @@ class BlockRenderer:
         table.add_row(cmd_text, Text(meta_text, style="dim"))
         return table
     
-    def _render_output_section(self, content: str, section_name: str, style: str) -> Panel:
-        """Render an output section with smart truncation and folding."""
+    def _render_output_section(self, content: str, section_name: str, style: str, width: Optional[int] = None, is_error: bool = False) -> Panel:
+        """Render an output section with smart truncation, detection, and highlighting."""
         lines = content.splitlines()
         
-        # Smart truncation for very long output
-        if len(lines) > 50:
-            display_lines = lines[:25] + ["... (truncated, press 'o' to see full output)"] + lines[-10:]
-            display_content = "\n".join(display_lines)
-        else:
-            display_content = content
-            
-        # Syntax highlighting for common patterns
-        if section_name == "Error":
-            # Highlight common error patterns
-            display_content = self._highlight_error_patterns(display_content)
-            
+        # Detect output type and format content
+        output_type = self.formatter.detect_output_type(content)
+        formatted = self.formatter.format_content(content, output_type)
+        
+        # Smart truncation for very long output (keep tail for context)
+        if len(lines) > 200:
+            head = "\n".join(lines[:80])
+            tail = "\n".join(lines[-30:])
+            truncated = f"{head}\n... ({len(lines)-110} lines truncated; press 'o' to expand)\n{tail}"
+            formatted = self.formatter.format_content(truncated, output_type)
+        
+        title_suffix = f" ({len(lines)} lines)" if len(lines) else ""
+        ot = str(output_type).lower()
+        panel_style = "red" if is_error or "error" in ot else "dim"
+        
         return Panel(
-            Text(display_content, style=style),
-            title=f"📄 {section_name} ({len(lines)} lines)",
+            formatted,
+            title=f"📄 {section_name}{title_suffix}",
             title_align="left",
-            border_style="dim",
+            border_style=panel_style,
             expand=False,
             padding=(0, 1)
         )
     
-    def _render_ai_section(self, explanation: str) -> Panel:
-        """Render AI explanation section with special styling."""
+    def _render_ai_section(self, explanation: str, width: Optional[int] = None) -> Panel:
+        """Render AI explanation section with Markdown styling."""
+        md = self.formatter.format_content(explanation, "markdown")
         return Panel(
-            Text(explanation, style="italic cyan"),
+            md,
             title="🤖 AI Assistant",
             title_align="left",
             border_style="cyan",
