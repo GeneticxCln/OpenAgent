@@ -50,6 +50,7 @@ from openagent.terminal.validator import (
 from openagent.terminal.validator import validate as validate_cmd
 from openagent.tools.git import GitTool, RepoGrep
 from openagent.tools.system import CommandExecutor, FileManager, SystemInfo
+from openagent.tools.patch import PatchEditor
 from openagent.ui import create_terminal_renderer
 
 # Initialize Rich console
@@ -171,6 +172,7 @@ def create_agent(
     agent.add_tool(SystemInfo())
     agent.add_tool(GitTool())
     agent.add_tool(RepoGrep())
+    agent.add_tool(PatchEditor())
 
     # Warm the model asynchronously (best-effort)
     try:

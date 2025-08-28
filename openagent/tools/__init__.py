@@ -6,9 +6,16 @@ system management, file operations, and command execution.
 """
 
 from .system import CommandExecutor, FileManager, SystemInfo
+from .git import GitTool, RepoGrep
+from .patch import PatchEditor
+from .github import GitHubTool
 
 __all__ = [
     "CommandExecutor",
     "FileManager",
     "SystemInfo",
+    "GitTool",
+    "RepoGrep",
+    "PatchEditor",
+    "GitHubTool",
 ]
