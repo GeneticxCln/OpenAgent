@@ -134,33 +134,37 @@ setup_environment() {
     
     # Create .env file if it doesn't exist
     if [ ! -f "$PROJECT_ROOT/.env" ]; then
-        log_info "Creating .env file..."
-        cat > "$PROJECT_ROOT/.env" << EOF
+        log_info "Creating .env file template (you must edit secrets before use)..."
+        cat > "$PROJECT_ROOT/.env" << 'EOF'
 # OpenAgent Environment Configuration
 
 # Authentication
+# Set AUTH_ENABLED=true and provide a secure JWT_SECRET_KEY in production
 AUTH_ENABLED=false
-JWT_SECRET_KEY=development-secret-key-change-in-production
+# JWT_SECRET_KEY should be set to a secure random string in production
+# example: JWT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+JWT_SECRET_KEY=
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 
 # Rate Limiting
 RATE_LIMIT_ENABLED=false
 
 # Database
+# For local development, SQLite is recommended; to use Postgres, set DATABASE_URL
 DATABASE_URL=sqlite:///./data/openagent.db
 POSTGRES_DB=openagent
 POSTGRES_USER=openagent
-POSTGRES_PASSWORD=openagent123
+POSTGRES_PASSWORD=
 
 # Monitoring
 GRAFANA_USER=admin
-GRAFANA_PASSWORD=admin123
+GRAFANA_PASSWORD=
 
 # Development
 DEVELOPMENT=true
 LOG_LEVEL=DEBUG
 EOF
-        log_success "Created .env file with development defaults"
+        log_success "Created .env template at .env - edit and set secrets before starting services"
     fi
     
     # Pre-commit hooks

@@ -43,28 +43,40 @@ class AuthManager:
         self.security = HTTPBearer(auto_error=False)
 
         # Simple in-memory user store (replace with real database in production)
-        self._users: Dict[str, Dict[str, Any]] = {
-            "admin": {
-                "id": "admin",
-                "username": "admin",
-                "email": "admin@example.com",
-                "password_hash": self._hash_password("admin123"),
-                "is_active": True,
-                "created_at": datetime.now(timezone.utc),
-                "last_login": None,
-                "roles": ["admin"],
-            },
-            "user": {
-                "id": "user",
-                "username": "user",
-                "email": "user@example.com",
-                "password_hash": self._hash_password("user123"),
-                "is_active": True,
-                "created_at": datetime.now(timezone.utc),
-                "last_login": None,
-                "roles": ["user"],
-            },
-        }
+        # By default do not seed demo users. To enable demo users for local dev set
+        # SEED_DEMO_USERS=true in the environment. This avoids shipping default
+        # passwords in source or images.
+        self._users: Dict[str, Dict[str, Any]] = {}
+        if os.getenv("SEED_DEMO_USERS", "false").lower() == "true":
+            # NOTE: these demo accounts are for local development only.
+            self._users.update(
+                {
+                    "admin": {
+                        "id": "admin",
+                        "username": "admin",
+                        "email": "admin@example.com",
+                        "password_hash": self._hash_password(
+                            os.getenv("DEMO_ADMIN_PASSWORD", "admin123")
+                        ),
+                        "is_active": True,
+                        "created_at": datetime.now(timezone.utc),
+                        "last_login": None,
+                        "roles": ["admin"],
+                    },
+                    "user": {
+                        "id": "user",
+                        "username": "user",
+                        "email": "user@example.com",
+                        "password_hash": self._hash_password(
+                            os.getenv("DEMO_USER_PASSWORD", "user123")
+                        ),
+                        "is_active": True,
+                        "created_at": datetime.now(timezone.utc),
+                        "last_login": None,
+                        "roles": ["user"],
+                    },
+                }
+            )
 
     def _hash_password(self, password: str) -> str:
         """Hash a password with salt."""
